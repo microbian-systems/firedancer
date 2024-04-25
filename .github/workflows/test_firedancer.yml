@@ -1,0 +1,28 @@
+name: Firedancer
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+jobs:
+  firedancer-tests:
+    runs-on: private
+    env:
+      CC: gcc
+      EXTRAS: no-solana
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/deps
+      - uses: ./.github/actions/hugepages
+
+      - name: build
+        run: |
+          ./contrib/make-j fddev all
+      - name: test firedancer - local cluster
+        run: |
+          sudo prlimit --pid=$$ --nofile=1048576
+          sudo prlimit --pid=$$ --memlock=unlimited
+          ./test-firedancer.sh
+

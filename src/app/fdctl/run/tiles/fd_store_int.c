@@ -36,6 +36,7 @@
 #define REPAIR_OUT_IDX  0
 #define REPLAY_OUT_IDX  1
 
+/* TODO: Determine/justify optimal number of repair requests */
 #define MAX_REPAIR_REQS  (32768UL)
 
 #define SCRATCH_SMAX     (256UL << 21UL)
@@ -85,7 +86,7 @@ struct fd_store_tile_ctx {
   ulong            replay_out_depth;
   ulong            replay_out_seq;
 
-fd_wksp_t * replay_out_mem;
+  fd_wksp_t * replay_out_mem;
   ulong       replay_out_chunk0;
   ulong       replay_out_wmark;
   ulong       replay_out_chunk;
@@ -97,6 +98,8 @@ fd_wksp_t * replay_out_mem;
   fd_repair_request_t * repair_req_buffer;
 
   fd_stake_ci_t * stake_ci;
+
+  ulong blockstore_seed;
 };
 typedef struct fd_store_tile_ctx fd_store_tile_ctx_t;
 
@@ -107,15 +110,12 @@ scratch_align( void ) {
 }
 
 FD_FN_PURE static inline ulong
-loose_footprint( fd_topo_tile_t const * tile ) {
-  (void)tile;
+loose_footprint( fd_topo_tile_t const * tile FD_PARAM_UNUSED ) {
   return 4UL * FD_SHMEM_GIGANTIC_PAGE_SZ;
 }
 
 FD_FN_PURE static inline ulong
-scratch_footprint( fd_topo_tile_t const * tile ) {
-  (void)tile;
-
+scratch_footprint( fd_topo_tile_t const * tile FD_PARAM_UNUSED) {
   ulong l = FD_LAYOUT_INIT;
   l = FD_LAYOUT_APPEND( l, alignof(fd_store_tile_ctx_t), sizeof(fd_store_tile_ctx_t) );
   l = FD_LAYOUT_APPEND( l, fd_store_align(), fd_store_footprint() );
@@ -134,14 +134,11 @@ mux_ctx( void * scratch ) {
 static void
 during_frag( void * _ctx,
              ulong  in_idx,
-             ulong  seq,
-             ulong  sig,
+             ulong  seq        FD_PARAM_UNUSED,
+             ulong  sig        FD_PARAM_UNUSED,
              ulong  chunk,
              ulong  sz,
              int *  opt_filter FD_PARAM_UNUSED ) {
-  (void)seq;
-  (void)sig;
-
   fd_store_tile_ctx_t * ctx = (fd_store_tile_ctx_t *)_ctx;
 
   if( FD_UNLIKELY( in_idx==STAKE_IN_IDX ) ) {
@@ -205,7 +202,6 @@ after_frag( void *             _ctx,
   }
 
   if( FD_UNLIKELY( in_idx==REPAIR_IN_IDX ) ) {
-    // FD_LOG_WARNING(("Received repair shred for slot %lu idx %lu", ((fd_shred_t const *)(ctx->shred_buffer))->slot, ((fd_shred_t const *)(ctx->shred_buffer))->idx));
     if( fd_store_shred_insert( ctx->store, fd_type_pun_const( ctx->shred_buffer ) ) < FD_BLOCKSTORE_OK ) {
       FD_LOG_ERR(( "failed inserting to blockstore" ));
     }
@@ -224,6 +220,8 @@ privileged_init( fd_topo_t *      topo  FD_PARAM_UNUSED,
     FD_LOG_ERR(( "identity_key_path not set" ));
 
   ctx->identity_key[ 0 ] = *(fd_pubkey_t *)fd_keyload_load( tile->store_int.identity_key_path, /* pubkey only: */ 1 );
+  
+  FD_TEST( sizeof(ulong) == getrandom( &ctx->blockstore_seed, sizeof(ulong), 0 ) );
 }
 
 static void
@@ -252,8 +250,6 @@ fd_store_tile_slot_prepare( fd_store_tile_ctx_t * ctx,
   if( ctx->store->curr_turbine_slot >= slot 
       && memcmp( ctx->identity_key, slot_leader, sizeof(fd_pubkey_t) ) == 0 ) {
     if( store_slot_prepare_mode == FD_STORE_SLOT_PREPARE_CONTINUE ) {
-      // TODO: set executed bit, push out finalize message to replay.
-      // TODO: send blockhash!
       fd_block_t * block = fd_blockstore_block_query( ctx->blockstore, slot );
       if( FD_LIKELY( block ) ) {
         block->flags = fd_uchar_set_bit( block->flags, FD_BLOCK_FLAG_PROCESSED );
@@ -362,7 +358,8 @@ fd_store_tile_slot_prepare( fd_store_tile_ctx_t * ctx,
 }
 
 static void
-during_housekeeping( void * _ctx ) {
+after_credit( void * _ctx,
+	      fd_mux_context_t * mux_ctx FD_PARAM_UNUSED ) {
   fd_store_tile_ctx_t * ctx = (fd_store_tile_ctx_t *)_ctx;
 
   fd_mcache_seq_update( ctx->replay_out_sync, ctx->replay_out_seq );
@@ -412,10 +409,6 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->stake_ci = fd_stake_ci_join( fd_stake_ci_new( FD_SCRATCH_ALLOC_APPEND( l, fd_stake_ci_align(), fd_stake_ci_footprint() ), ctx->identity_key ) );
   void * smem = FD_SCRATCH_ALLOC_APPEND( l, fd_scratch_smem_align(), fd_scratch_smem_footprint( SCRATCH_SMAX ) );
   void * fmem = FD_SCRATCH_ALLOC_APPEND( l, fd_scratch_fmem_align(), fd_scratch_fmem_footprint( SCRATCH_SDEPTH ) );
-  ulong scratch_top = FD_SCRATCH_ALLOC_FINI( l, 1UL );
-  if( FD_UNLIKELY( scratch_top > (ulong)scratch + scratch_footprint( tile ) ) ) {
-    FD_LOG_ERR(( "scratch overflow %lu %lu %lu", scratch_top - (ulong)scratch - scratch_footprint( tile ), scratch_top, (ulong)scratch + scratch_footprint( tile ) ));
-  }
 
   /* Create scratch region */
   FD_TEST( (!!smem) & (!!fmem) );
@@ -432,8 +425,6 @@ unprivileged_init( fd_topo_t *      topo,
     FD_LOG_ERR(( "no blocktore workspace" ));
   }
 
-  /* TODO: standardize seed selection */
-  ulong hashseed = 42;
 
   fd_blockstore_t *        blockstore = NULL;
   void * shmem = fd_wksp_alloc_laddr(
@@ -448,7 +439,7 @@ unprivileged_init( fd_topo_t *      topo,
   ulong slot_history_max = FD_BLOCKSTORE_SLOT_HISTORY_MAX;
   int   lg_txn_max       = 24;
   blockstore             = fd_blockstore_join(
-      fd_blockstore_new( shmem, 1, hashseed, tmp_shred_max, slot_history_max, lg_txn_max ) );
+      fd_blockstore_new( shmem, 1, ctx->blockstore_seed, tmp_shred_max, slot_history_max, lg_txn_max ) );
   if( blockstore == NULL ) {
     fd_wksp_free_laddr( shmem );
     FD_LOG_ERR( ( "failed to allocate a blockstore" ) );
@@ -521,33 +512,24 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->replay_out_wmark  = fd_dcache_compact_wmark ( ctx->replay_out_mem, replay_out->dcache, replay_out->mtu );
   ctx->replay_out_chunk  = ctx->replay_out_chunk0;
 
-  /* Valloc setup */
-  void * alloc_shalloc = fd_alloc_new( alloc_shmem, 3UL );
-  if( FD_UNLIKELY( !alloc_shalloc ) ) { 
-    FD_LOG_ERR( ( "fd_allow_new failed" ) ); }
-  fd_alloc_t * alloc = fd_alloc_join( alloc_shalloc, 3UL );
-  if( FD_UNLIKELY( !alloc ) ) {
-    FD_LOG_ERR( ( "fd_alloc_join failed" ) ); 
+  ulong scratch_top = FD_SCRATCH_ALLOC_FINI( l, 1UL );
+  if( FD_UNLIKELY( scratch_top > (ulong)scratch + scratch_footprint( tile ) ) ) {
+    FD_LOG_ERR(( "scratch overflow %lu %lu %lu", scratch_top - (ulong)scratch - scratch_footprint( tile ), scratch_top, (ulong)scratch + scratch_footprint( tile ) ));
   }
-
-  fd_valloc_t valloc = fd_alloc_virtual( alloc );
-  (void)valloc;
 }
 
 static ulong
-populate_allowed_seccomp( void *               scratch,
+populate_allowed_seccomp( void *               scratch FD_PARAM_UNUSED,
                           ulong                out_cnt,
                           struct sock_filter * out ) {
-  (void)scratch;
   populate_sock_filter_policy_store_int( out_cnt, out, (uint)fd_log_private_logfile_fd() );
   return sock_filter_policy_store_int_instr_cnt;
 }
 
 static ulong
-populate_allowed_fds( void * scratch,
+populate_allowed_fds( void * scratch     FD_PARAM_UNUSED,
                       ulong  out_fds_cnt,
                       int *  out_fds ) {
-  (void)scratch;
   if( FD_UNLIKELY( out_fds_cnt<2 ) ) FD_LOG_ERR(( "out_fds_cnt %lu", out_fds_cnt ));
 
   ulong out_cnt = 0;
@@ -563,6 +545,7 @@ fd_topo_run_tile_t fd_tile_store_int = {
   .burst                    = 1UL,
   .loose_footprint          = loose_footprint,
   .mux_ctx                  = mux_ctx,
+  .mux_after_credit         = after_credit,
   .mux_during_frag          = during_frag,
   .mux_after_frag           = after_frag,
   .populate_allowed_seccomp = populate_allowed_seccomp,
@@ -571,5 +554,4 @@ fd_topo_run_tile_t fd_tile_store_int = {
   .scratch_footprint        = scratch_footprint,
   .privileged_init          = privileged_init,
   .unprivileged_init        = unprivileged_init,
-  .mux_during_housekeeping  = during_housekeeping,
 };

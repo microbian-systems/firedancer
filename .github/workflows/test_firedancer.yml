@@ -16,6 +16,8 @@ jobs:
 
       - uses: ./.github/actions/deps
       - uses: ./.github/actions/hugepages
+        with:
+          count: 128
 
       - name: build
         run: |

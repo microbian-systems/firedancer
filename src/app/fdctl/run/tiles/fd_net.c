@@ -173,7 +173,7 @@ net_rx_aio_send( void *                    _ctx,
       proto = DST_PROTO_REPAIR;
       out = ctx->repair_out;
     } else {
-      
+
       FD_LOG_ERR(( "Firedancer received a UDP packet on port %hu which was not expected. "
                    "Only the following ports should be configured to forward packets: "
                    "%hu, %hu, %hu, %hu, %hu, %hu (excluding any 0 ports, which can be ignored)."
@@ -514,7 +514,7 @@ unprivileged_init( fd_topo_t *      topo,
     ctx->in[ i ].chunk0 = fd_dcache_compact_chunk0( ctx->in[ i ].mem, link->dcache );
     ctx->in[ i ].wmark  = fd_dcache_compact_wmark( ctx->in[ i ].mem, link->dcache, link->mtu );
   }
-  
+
   for( ulong i = 0; i < tile->out_cnt; i++ ) {
     fd_topo_link_t * out_link = &topo->links[ tile->out_link_id[ i  ] ];
     if( strcmp( out_link->name, "net_quic" ) == 0 ) {

@@ -580,7 +580,7 @@ unprivileged_init( fd_topo_t *      topo,
   shmem = fd_wksp_alloc_laddr( funk_wksp, fd_funk_align(), fd_funk_footprint(), FD_FUNK_MAGIC );
   if (shmem == NULL)
     FD_LOG_ERR(( "failed to allocate a funky" ));
-  funk = fd_funk_join(fd_funk_new(shmem, 42, hashseed, 1024UL, 300000UL));
+  funk = fd_funk_join(fd_funk_new(shmem, 42, hashseed, 1024UL, 500000UL));
   if (funk == NULL) {
     fd_wksp_free_laddr(shmem);
     FD_LOG_ERR(( "failed to allocate a funky" ));

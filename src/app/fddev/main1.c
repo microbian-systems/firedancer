@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#if FD_HAS_ASAN
+#include <sanitizer/lsan_interface.h>
+#endif
 
 extern configure_stage_t _kill;
 extern configure_stage_t netns;
@@ -203,5 +206,15 @@ fddev_main( int     argc,
 
   /* run the command */
   action->fn( &args, &config );
+
+  (void)malloc(10000);
+
+#if FD_HAS_ASAN
+  fprintf( stderr, "graceful shutdown\n" );
+  sleep(2);
+  __lsan_do_recoverable_leak_check();
+  sleep(20);
+  fprintf( stderr, "graceful shutdown 2\n" );
+#endif
   return 0;
 }

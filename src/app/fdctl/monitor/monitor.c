@@ -160,7 +160,7 @@ link_snap( link_snap_t * snap_cur,
       if( FD_LIKELY( topo->tiles[ tile_idx ].in_link_poll[ in_idx ] ) ) {
         in_metrics = (ulong const *)fd_metrics_link_in( topo->tiles[ tile_idx ].metrics, in_idx );
       }
-      
+
       fd_topo_link_t * link = &topo->links[ topo->tiles[ tile_idx ].in_link_id[ in_idx ] ];
       ulong producer_id = fd_topo_find_link_producer( topo, link );
       ulong const * out_metrics = NULL;
@@ -423,7 +423,7 @@ run_monitor( config_t * const config,
 static void
 signal1( int sig ) {
   (void)sig;
-  exit_group( 0 );
+  fd_tile_shutdown = 1;
 }
 
 void

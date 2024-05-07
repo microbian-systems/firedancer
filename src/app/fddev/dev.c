@@ -63,11 +63,10 @@ parent_signal( int sig ) {
   int lock = 0;
   fd_log_private_shared_lock = &lock;
 
-  if( -1!=fd_log_private_logfile_fd() ) FD_LOG_ERR_NOEXIT(( "Received signal %s\nLog at \"%s\"", fd_io_strsignal( sig ), fd_log_private_path ));
-  else                                  FD_LOG_ERR_NOEXIT(( "Received signal %s",                fd_io_strsignal( sig ) ));
+  if( -1!=fd_log_private_logfile_fd() ) FD_LOG_WARNING(( "Received signal %s\nLog at \"%s\"", fd_io_strsignal( sig ), fd_log_private_path ));
+  else                                  FD_LOG_WARNING(( "Received signal %s",                fd_io_strsignal( sig ) ));
 
-  if( FD_LIKELY( sig==SIGINT ) ) exit_group( 128+SIGINT  );
-  else                           exit_group( 128+SIGTERM );
+  fd_tile_shutdown = 1;
 }
 
 static void
@@ -150,7 +149,7 @@ run_firedancer_threaded( config_t * config ) {
   }
 
   /* None of the threads will ever exit, they just abort the process, so sleep forever. */
-  for(;;) pause();
+  while( !fd_tile_shutdown) pause();
 }
 
 void

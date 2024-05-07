@@ -384,7 +384,7 @@ fd_mux_tile( fd_cnc_t *              cnc,
   fd_cnc_signal( cnc, FD_CNC_SIGNAL_RUN );
   long then = fd_tickcount();
   long now  = then;
-  for(;;) {
+  while( !fd_tile_shutdown) {
 
     /* Do housekeeping at a low rate in the background */
 
@@ -683,7 +683,7 @@ fd_mux_tile( fd_cnc_t *              cnc,
     ulong diag_idx = FD_METRICS_COUNTER_LINK_PUBLISHED_COUNT_OFF + 2UL*(ulong)filter;
     this_in->accum[ diag_idx     ]++;
     this_in->accum[ diag_idx+1UL ] += (uint)sz;
-    
+
     fd_histf_t * hist_ticks = fd_ptr_if( filter, (fd_histf_t*)hist_filter2_ticks,   (fd_histf_t*)hist_fin_ticks );
     fd_histf_t * hist_sz    = fd_ptr_if( filter, (fd_histf_t*)hist_filter2_frag_sz, (fd_histf_t*)hist_fin_frag_sz );
     fd_histf_sample( hist_ticks, (ulong)(next - now) );

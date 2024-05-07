@@ -161,9 +161,8 @@ fd_topo_run_tile( fd_topo_t *          topo,
   if( FD_UNLIKELY( tile_run->lazy ) ) lazy = tile_run->lazy( tile_mem );
 
   fd_rng_t rng[1];
-  int ret = 0;
   if( FD_LIKELY( tile_run->main == NULL ) ) {
-    ret = fd_mux_tile( tile->cnc,
+    fd_mux_tile( tile->cnc,
                        tile_run->mux_flags,
                        polled_in_cnt,
                        in_mcache,
@@ -179,9 +178,8 @@ fd_topo_run_tile( fd_topo_t *          topo,
                        ctx,
                        &callbacks );
   } else {
-    ret = tile_run->main();
+    tile_run->main();
   }
-  FD_LOG_ERR(( "tile run loop returned: %d", ret ));
 }
 
 typedef struct {
@@ -205,15 +203,13 @@ run_tile_thread_main( void * _args ) {
   if( FD_UNLIKELY( prctl( PR_SET_NAME, thread_name, 0, 0, 0 ) ) ) FD_LOG_ERR(( "prctl(PR_SET_NAME) failed (%i-%s)", errno, fd_io_strerror( errno ) ));
 
   fd_topo_run_tile( args.topo, args.tile, 0, args.uid, args.gid, -1, NULL, NULL, &args.tile_run );
-  if( FD_UNLIKELY( args.done_futex ) ) {
+  if( FD_UNLIKELY( args.done_futex && !fd_tile_shutdown ) ) {
     for(;;) {
       if( FD_LIKELY( INT_MAX==FD_ATOMIC_CAS( args.done_futex, INT_MAX, (int)args.tile->id ) ) ) break;
       FD_SPIN_PAUSE();
     }
     if( FD_UNLIKELY( -1==syscall( SYS_futex, args.done_futex, FUTEX_WAKE, INT_MAX, NULL, NULL, 0 ) ) )
       FD_LOG_ERR(( "futex(FUTEX_WAKE) failed (%i-%s)", errno, fd_io_strerror( errno ) ));
-  } else {
-    FD_LOG_ERR(( "fd_topo_run_tile() returned" ));
   }
   return NULL;
 }

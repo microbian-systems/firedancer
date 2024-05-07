@@ -309,7 +309,7 @@ fd_tile_private_manager( void * _args ) {
   FD_VOLATILE( tile->state ) = FD_TILE_PRIVATE_STATE_IDLE;
   FD_VOLATILE( args->tile  ) = tile;
 
-  for(;;) {
+  while( !fd_tile_shutdown ) {
 
     /* We are awake ... see what we should do next */
 

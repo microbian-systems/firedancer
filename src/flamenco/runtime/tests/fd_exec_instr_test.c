@@ -13,6 +13,9 @@
 #include "../sysvar/fd_sysvar_recent_hashes.h"
 #include "../../../funk/fd_funk.h"
 #include "../../../util/bits/fd_float.h"
+#include "../../../ballet/sbpf/fd_sbpf_loader.h"
+#include "../../../ballet/elf/fd_elf.h"
+#include "../../vm/fd_vm_syscalls.h"
 #include <assert.h>
 #include "../sysvar/fd_sysvar_cache.h"
 
@@ -859,4 +862,72 @@ fd_exec_instr_test_run( fd_exec_instr_test_runner_t *        runner,
 
   *output = effects;
   return actual_end - (ulong)output_buf;
+}
+
+uint const _syscalls[] = {
+  0xb6fc1a11, 0x686093bb, 0x207559bd, 0x5c2a3178, 0x52ba5096,
+  0x7ef088ca, 0x9377323c, 0x48504a38, 0x11f49d86, 0xd7793abb,
+  0x17e40350, 0x174c5122, 0xaa2607ca, 0xdd1c41a6, 0xd56b5fe9,
+  0x23a29a61, 0x3b97b73c, 0xbf7188f6, 0x717cc4a3, 0x434371f8,
+  0x5fdcde31, 0x3770fb22, 0xa22b9c85, 0xd7449092, 0x83f00e8f,
+  0xa226d3eb, 0x5d2245e4, 0x7317b434, 0xadb8efc8, 0x85532d94,
+  0U
+}; //murmur32 hashed syscall names
+
+ulong
+fd_sbpf_program_load_test_run( void const *         _bin,
+                               ulong                elf_sz,
+                               fd_exec_test_elf_loader_effects_t ** output,
+                               void *                               output_buf,
+                               ulong                                output_bufsz ){
+  fd_sbpf_elf_info_t info;
+  if( FD_UNLIKELY( !fd_sbpf_elf_peek( &info, _bin, elf_sz ) ) ) {
+    return 0UL;
+  }
+  fd_valloc_t valloc = fd_scratch_virtual();
+
+  void* rodata = fd_valloc_malloc( valloc, 8UL, info.rodata_footprint );
+  FD_TEST( rodata );
+
+  fd_sbpf_program_t * prog = fd_sbpf_program_new( fd_valloc_malloc( valloc, fd_sbpf_program_align(), fd_sbpf_program_footprint( &info ) ), &info, rodata );
+  FD_TEST( prog );
+
+  fd_sbpf_syscalls_t * syscalls = fd_sbpf_syscalls_new( fd_valloc_malloc( valloc, fd_sbpf_syscalls_align(), fd_sbpf_syscalls_footprint() ));
+
+  fd_vm_syscall_register_all( syscalls );
+
+  int res = fd_sbpf_program_load( prog, _bin, elf_sz, syscalls );
+  if( FD_UNLIKELY( res ) ) {
+    return 0UL;
+  }
+
+  // Allocate space for captured effects
+  ulong output_end = (ulong)output_buf + output_bufsz;
+  FD_SCRATCH_ALLOC_INIT( l, output_buf );
+
+  fd_exec_test_elf_loader_effects_t * elf_effects =
+    FD_SCRATCH_ALLOC_APPEND( l, alignof(fd_exec_test_elf_loader_effects_t),
+                                sizeof (fd_exec_test_elf_loader_effects_t) );
+  if( FD_UNLIKELY( _l > output_end ) ) {
+    return 0UL;
+  }
+
+  fd_memset( elf_effects, 0, sizeof(fd_exec_test_elf_loader_effects_t) );
+  elf_effects->rodata_sz = prog->rodata_sz;
+
+  ulong text_sz = prog->text_cnt * sizeof(fd_sbpf_instr_t);
+  elf_effects->text = FD_SCRATCH_ALLOC_APPEND(l, 8UL, PB_BYTES_ARRAY_T_ALLOCSIZE( text_sz )); // TODO: text should be within rodata, figure out how to point to it instead?
+  elf_effects->text->size = (pb_size_t) text_sz;
+  fd_memcpy( &(elf_effects->text->bytes), prog->text, text_sz );
+
+  elf_effects->text_cnt = prog->text_cnt;
+  elf_effects->text_off = prog->text_off;
+
+  elf_effects->entry_pc = prog->entry_pc;
+
+  ulong actual_end = FD_SCRATCH_ALLOC_FINI( l, 1UL );
+
+
+  *output = elf_effects;
+  return actual_end - (ulong) output_buf;
 }

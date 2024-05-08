@@ -183,7 +183,11 @@ fd_sbpf_program_new( void *                     prog_mem,
      reject_broken_elfs: true
 
    For documentation on these config params, see:
-   https://github.com/solana-labs/rbpf/blob/v0.3.0/src/vm.rs#L198 */
+   https://github.com/solana-labs/rbpf/blob/v0.3.0/src/vm.rs#L198 
+
+   Solana/Agave equivalent:
+   https://github.com/solana-labs/rbpf/blob/main/src/elf.rs#L361
+   */
 
 int
 fd_sbpf_program_load( fd_sbpf_program_t *  prog,

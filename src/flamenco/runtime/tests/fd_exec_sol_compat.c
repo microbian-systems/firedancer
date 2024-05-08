@@ -133,6 +133,47 @@ sol_compat_instr_execute_v1( uchar *       out,
   return ok;
 }
 
+
+int
+sol_compat_elf_loader_v1( uchar *       out,
+                   ulong *       out_sz,
+                   uchar const * in,
+                   ulong         in_sz ) {
+  ulong fmem[ 64 ];
+  fd_scratch_attach( smem, fmem, smax, 64UL );
+  fd_scratch_push();
+
+  fd_exec_test_elf_loader_effects_t * output = NULL;
+  do {
+    ulong out_bufsz = 100000000;
+    void * out0 = fd_scratch_prepare( 1UL );
+    assert( out_bufsz < fd_scratch_free() );
+    fd_scratch_publish( (void *)( (ulong)out0 + out_bufsz ) );
+    ulong out_used = fd_sbpf_program_load_test_run( in, in_sz, &output, out0, out_bufsz );
+    if( FD_UNLIKELY( !out_used ) ) {
+      output = NULL;
+      break;
+    }
+  } while(0);
+
+  int ok = 0;
+
+  if( output ) {
+    pb_ostream_t ostream = pb_ostream_from_buffer( out, *out_sz );
+    int encode_ok = pb_encode( &ostream, &fd_exec_test_elf_loader_effects_t_msg, output );
+    if( encode_ok ) {
+      *out_sz = ostream.bytes_written;
+      ok = 1;
+    }
+  }
+
+
+  fd_scratch_pop();
+  fd_scratch_detach( NULL );  
+  return ok;
+
+}
+
 sol_compat_features_t const *
 sol_compat_get_features_v1( void ) {
   return &features;

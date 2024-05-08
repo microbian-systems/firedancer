@@ -992,8 +992,7 @@ fd_blockstore_snapshot_insert( fd_blockstore_t * blockstore, fd_slot_bank_t cons
 
   fd_blockstore_slot_map_t * slot_entry =
       fd_blockstore_slot_map_insert( fd_blockstore_slot_map( blockstore ), snapshot_slot_bank->slot );
-  if( !slot_entry ) return;
-
+  
   /* fake the snapshot slot meta */
 
   fd_slot_meta_t * slot_meta = &slot_entry->slot_meta;

@@ -468,7 +468,7 @@ after_credit( void *             _ctx,
   if( now - ctx->last_stake_weights_push_time > (long)5e9 ) {
     ctx->last_stake_weights_push_time = now;
     fd_epoch_bank_t * epoch_bank = fd_exec_epoch_ctx_epoch_bank( ctx->slot_ctx->epoch_ctx );
-    {
+    if( ctx->slot_ctx->slot_bank.epoch_stakes.vote_accounts_root ) {
       ulong * stake_weights_msg         = fd_chunk_to_laddr( ctx->stake_weights_out_mem, ctx->stake_weights_out_chunk );
       fd_stake_weight_t * stake_weights = (fd_stake_weight_t *)&stake_weights_msg[4];
       ulong stake_weight_idx            = fd_stake_weights_by_node( &ctx->slot_ctx->slot_bank.epoch_stakes, stake_weights );
@@ -486,7 +486,7 @@ after_credit( void *             _ctx,
       ctx->stake_weights_out_chunk = fd_dcache_compact_next( ctx->stake_weights_out_chunk, stake_weights_sz, ctx->stake_weights_out_chunk0, ctx->stake_weights_out_wmark );
     }
 
-    {
+    if( epoch_bank->next_epoch_stakes.vote_accounts_root ) {
       ulong * stake_weights_msg         = fd_chunk_to_laddr( ctx->stake_weights_out_mem, ctx->stake_weights_out_chunk );
       fd_stake_weight_t * stake_weights = (fd_stake_weight_t *)&stake_weights_msg[4];
       ulong stake_weight_idx            = fd_stake_weights_by_node( &epoch_bank->next_epoch_stakes, stake_weights );

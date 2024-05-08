@@ -41,6 +41,8 @@
 
 #include "../tile/fd_tile_private.h"
 
+extern int fd_tile_shutdown;
+
 #ifdef FD_BUILD_INFO
 FD_IMPORT_CSTR( fd_log_build_info, FD_BUILD_INFO );
 #else
@@ -545,18 +547,22 @@ fd_log_private_fprintf_0( int          fd,
   va_end( ap );
 
 # if FD_HAS_ATOMIC
-  FD_COMPILER_MFENCE();
-  while(( FD_LIKELY( FD_ATOMIC_CAS( fd_log_private_shared_lock, 0, 1 ) ) )) ;
-  FD_COMPILER_MFENCE();
+  if( !fd_tile_shutdown ) {
+    FD_COMPILER_MFENCE();
+    while(( FD_LIKELY( FD_ATOMIC_CAS( fd_log_private_shared_lock, 0, 1 ) ) )) ;
+    FD_COMPILER_MFENCE();
+  }
 # endif
 
   ulong wsz;
   fd_io_write( fd, msg, (ulong)len, (ulong)len, &wsz ); /* Note: we ignore errors because what are we doing to do? log them? */
 
 # if FD_HAS_ATOMIC
-  FD_COMPILER_MFENCE();
-  FD_VOLATILE( *fd_log_private_shared_lock ) = 0;
-  FD_COMPILER_MFENCE();
+  if( !fd_tile_shutdown ) {
+    FD_COMPILER_MFENCE();
+    FD_VOLATILE( *fd_log_private_shared_lock ) = 0;
+    FD_COMPILER_MFENCE();
+  }
 # endif
 
 }
@@ -1468,7 +1474,7 @@ fd_log_private_stack_discover( ulong   stack_sz,
   char * p = filebuf;
   int found = 0;
   while( !found ) {
-    
+
     /* Scan a line */
 
     int full_line = 0;
@@ -1508,18 +1514,8 @@ fd_log_private_stack_discover( ulong   stack_sz,
     if( FD_UNLIKELY( (m0<=stack_addr) & (stack_addr<m1) ) ) {
       found = 1;
       ulong msz = m1 - m0;
-      if( msz==stack_sz ) { /* Memory region matches expectations */
+      if( msz>=stack_sz ) { /* Memory region matches expectations */
         stack0 = m0;
-        stack1 = m1;
-      } else if( ((fd_log_group_id()==fd_log_tid()) & (msz<stack_sz)) ) {
-        /* This is the main thread, which, on recent Linux, seems to
-           just reserve address space for main's stack at program
-           start up to the application stack size limits then uses
-           page faults to dynamically back the stack with DRAM as the
-           stack grows (which is awful for performance, jitter and
-           reliability ... sigh).  This assumes stack grows down such
-           that m1 is the fixed value in this process. */
-        stack0 = m1 - stack_sz;
         stack1 = m1;
       } else {
         FD_LOG_WARNING(( "unexpected caller stack memory region size (got %lu bytes, expected %lu bytes)", msz, stack_sz ));
@@ -1533,7 +1529,7 @@ fd_log_private_stack_discover( ulong   stack_sz,
     FD_LOG_WARNING(( "unable to find stack size around address 0x%lx", stack_addr ));
 
   close(filefd);
-  
+
   *_stack0 = stack0;
   *_stack1 = stack1;
 }

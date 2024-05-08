@@ -691,20 +691,5 @@ fd_mux_tile( fd_cnc_t *              cnc,
     now = next;
   }
 
-  do {
-
-    FD_LOG_INFO(( "Halting mux" ));
-
-    while( in_cnt ) {
-      ulong in_idx = --in_cnt;
-      fd_mux_tile_in_t * this_in = &in[ in_idx ];
-      fd_mux_tile_in_update( this_in, 0UL ); /* exposed_cnt 0 assumes all reliable consumers caught up or shutdown */
-    }
-
-    FD_LOG_INFO(( "Halted mux" ));
-    fd_cnc_signal( cnc, FD_CNC_SIGNAL_BOOT );
-
-  } while(0);
-
   return 0;
 }

@@ -726,12 +726,10 @@ fd_tile_private_boot( int *    pargc,
   fd_tile_private_id  = fd_tile_private_id0;
   fd_tile_private_idx = 0UL;
 
-# if !FD_HAS_ASAN
   fd_log_private_stack_discover( fd_log_private_main_stack_sz(),
                                  &fd_tile_private_stack0, &fd_tile_private_stack1 ); /* logs details */
   if( FD_UNLIKELY( !fd_tile_private_stack0 ) )
     FD_LOG_WARNING(( "stack diagnostics not available on this tile; attempting to continue" ));
-# endif /* FD_HAS_ASAN */
 
   fd_tile_private_cpu_config( fd_tile_private_cpu_config_save, cpu_idx );
   fd_tile_private[0].lock = NULL; /* Can't dispatch to tile 0 */

@@ -207,14 +207,12 @@ fddev_main( int     argc,
   /* run the command */
   action->fn( &args, &config );
 
-  (void)malloc(10000);
+  fd_tile_private_halt();
 
 #if FD_HAS_ASAN
   fprintf( stderr, "graceful shutdown\n" );
-  sleep(2);
   __lsan_do_recoverable_leak_check();
-  sleep(20);
-  fprintf( stderr, "graceful shutdown 2\n" );
 #endif
+
   return 0;
 }

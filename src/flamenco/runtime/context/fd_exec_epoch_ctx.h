@@ -10,7 +10,7 @@
    an entire epoch. */
 
 struct fd_exec_epoch_ctx_layout {
-  ulong vote_acct_max;
+  ulong vote_acc_max;
   ulong footprint;
 
   ulong stake_votes_off;
@@ -40,7 +40,7 @@ FD_PROTOTYPES_BEGIN
 
 void *
 fd_exec_epoch_ctx_new( void * mem,
-                       ulong  vote_acct_max );
+                       ulong  vote_acc_max );
 
 fd_exec_epoch_ctx_t *
 fd_exec_epoch_ctx_join( void * mem );
@@ -51,11 +51,14 @@ fd_exec_epoch_ctx_leave( fd_exec_epoch_ctx_t * ctx );
 void *
 fd_exec_epoch_ctx_delete( void * mem );
 
+void
+fd_exec_epoch_ctx_epoch_bank_delete( fd_exec_epoch_ctx_t * epoch_ctx );
+
 ulong
 fd_exec_epoch_ctx_align( void );
 
 ulong
-fd_exec_epoch_ctx_footprint( ulong vote_acct_max );
+fd_exec_epoch_ctx_footprint( ulong vote_acc_max );
 
 /* fd_exec_epoch_ctx_fixup_memory makes an epoch context safe for reuse
    across different address spaces.  This function is very silly:  It
@@ -81,6 +84,14 @@ fd_exec_epoch_ctx_footprint( ulong vote_acct_max );
 void
 fd_exec_epoch_ctx_fixup_memory( fd_exec_epoch_ctx_t * epoch_ctx,
                                 fd_valloc_t const *   valloc );
+
+/* fd_exec_epoch_ctx_bank_mem_clear empties out the existing bank
+   data structures (votes, delegations, stake history, next_epoch_stakes).
+   This method should be used before decoding a bank from funk so as
+   to not step on the work done while decoding. 
+*/
+void
+fd_exec_epoch_ctx_bank_mem_clear( fd_exec_epoch_ctx_t * epoch_ctx );
 
 /* Accessors **********************************************************/
 

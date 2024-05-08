@@ -171,7 +171,7 @@ privileged_init( fd_topo_t *      topo,
   ctx->private_key = identity_key;
   ctx->public_key  = identity_key + 32UL;
 
-  /* The stack can be taken over and reorganized by under AddressSanitizer, 
+    /* The stack can be taken over and reorganized by under AddressSanitizer, 
      which causes this code to fail.  */
 #if FD_HAS_ASAN
   FD_LOG_WARNING(( "!!! SECURITY WARNING !!! YOU ARE RUNNING THE SIGNING TILE "
@@ -187,7 +187,13 @@ privileged_init( fd_topo_t *      topo,
   if( FD_UNLIKELY( madvise( (void*)fd_tile_stack0(), fd_tile_stack_sz(), MADV_DONTDUMP ) ) )
     FD_LOG_ERR(( "madvise failed (%i-%s)", errno, fd_io_strerror( errno ) ));
 #endif
-  
+
+  /* Prevent the stack from showing up in core dumps just in case the
+     private key somehow ends up in there. */
+  FD_TEST( fd_tile_stack0() );
+  FD_TEST( fd_tile_stack_sz() );
+  if( FD_UNLIKELY( madvise( (void*)fd_tile_stack0(), fd_tile_stack_sz(), MADV_DONTDUMP ) ) )
+    FD_LOG_ERR(( "madvise failed (%i-%s)", errno, fd_io_strerror( errno ) ));
 }
 
 static void FD_FN_SENSITIVE

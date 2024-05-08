@@ -26,5 +26,5 @@ jobs:
         run: |
           sudo prlimit --pid=$$ --nofile=1048576
           sudo prlimit --pid=$$ --memlock=unlimited
-          ./test-firedancer.sh
+          ./contrib/test/test_firedancer.sh
 

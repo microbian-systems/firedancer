@@ -559,7 +559,7 @@ unprivileged_init( fd_topo_t *      topo,
   ulong hashseed = fd_hash(0, hostname, strnlen(hostname, sizeof(hostname)));
 
   // Allocate new wksp
-  fd_wksp_t * funk_wksp = fd_wksp_new_anonymous( FD_SHMEM_GIGANTIC_PAGE_SZ, 8UL, 0UL, "wksp", 0UL );
+  fd_wksp_t * funk_wksp = fd_wksp_new_anonymous( FD_SHMEM_GIGANTIC_PAGE_SZ, 128UL, 0UL, "wksp", 0UL );
   if (funk_wksp == NULL)
     FD_LOG_ERR(( "failed to attach to workspace" ));
   fd_wksp_reset( funk_wksp, (uint)hashseed);
@@ -580,7 +580,7 @@ unprivileged_init( fd_topo_t *      topo,
   shmem = fd_wksp_alloc_laddr( funk_wksp, fd_funk_align(), fd_funk_footprint(), FD_FUNK_MAGIC );
   if (shmem == NULL)
     FD_LOG_ERR(( "failed to allocate a funky" ));
-  funk = fd_funk_join(fd_funk_new(shmem, 42, hashseed, 1024UL, 500000UL));
+  funk = fd_funk_join(fd_funk_new(shmem, 42, hashseed, 1024UL, 200000000UL));
   if (funk == NULL) {
     fd_wksp_free_laddr(shmem);
     FD_LOG_ERR(( "failed to allocate a funky" ));

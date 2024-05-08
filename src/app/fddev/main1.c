@@ -211,7 +211,7 @@ fddev_main( int     argc,
 
 #if FD_HAS_ASAN
   fprintf( stderr, "graceful shutdown\n" );
-  __lsan_do_recoverable_leak_check();
+  sleep(2);
 #endif
 
   return 0;

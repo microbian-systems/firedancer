@@ -26,8 +26,17 @@ one_repetition() {
   START_SLOT=$rooted_start_slot
   END_SLOT=$rooted_end_slot
 
-  echo "running one repetition. current rooted repetition [$START_SLOT, $END_SLOT]"
-  source $ROOT_DIR/minify.sh
+  echo "[~] current rooted repetition [$START_SLOT, $END_SLOT]"
+  
+  if [[ -n "$REP_SZ" ]]; then
+    source $ROOT_DIR/minify.sh
+  else
+    # If REP_SZ is not specified, load the entire ledger in for the replay
+    minimized_snapshot=$(find "$LEDGER" -maxdepth 1 -name 'snapshot-*.tar.zst' -print0 | xargs -0 ls -t | head -n 1)
+    cp "$minimized_snapshot" "$LEDGER_MIN"
+    cp $LEDGER/gen* "$LEDGER_MIN"
+    cp -r "$LEDGER/rocksdb" "$LEDGER_MIN"
+  fi  
   source $ROOT_DIR/replay.sh
 }
 
@@ -54,11 +63,8 @@ all() {
 
   # If --repetitions multiple, we run the pipeline continuously until the whole ledger is searched for BHMs
   if [ "$MODE" = "exact" ] && [ "$REPETITIONS" = "multiple" ]; then
-    # If $REP_SZ is not specified, execute the pipeline from START_SLOT to END_SLOT in one go
     if [ -z "$REP_SZ" ]; then
       all_repetition
-
-    # If $REP_SIZE is specified, divide the bounds START_SLOT-END_SLOT into chunks of REP_SIZE
     else
       original_start_slot=$START_SLOT
       original_end_slot=$END_SLOT
@@ -78,7 +84,6 @@ all() {
         fi
       done
     fi
-  # For all other modes, the pipeline is just ran once to find the first bank hash mismatch
   else
     one_repetition
   fi
@@ -93,15 +98,15 @@ usage() {
 
   elif [[ $1 == "minify" ]]; then
     echo -e "Usage: $0 minify \n\
-                --network -n                    : Solana network to download the ledger from. Choose: mainnet|testnet|internal. \n\
-                --mode -m                       : Method to minimize the ledger. Either as an offset around an epoch edge, or defined as an exact start and end slot. Choose: edge|exact. \n\
+                --network -n                    : Solana network to download the ledger from. Choose: mainnet|testnet|internal. \n\                
                 --ledger -l                     : Directory where the initial ledger can be found. \n\
                 --ledger-min -z                 : Directory where the minimized ledger should be placed. \n\
-                --edge-offset -o                : Required if the mode is edge, this defines the  number of slots to minimize on each side of the epoch boundary. \n\
-                --start-slot -s                 : Required if the mode is exact, this defines the slot to start minimization. \n\
-                --end-slot -e                   : Required if the mode is exact, this defines the slot to end minimization. \n\
                 --solana-build-dir -d           : Path to the solana build directory. E.g. /home/fd_user/solana/target/debug \n\
                 --firedancer-root-dir -f        : Path to the firedancer root directory. E.g. /home/fd_user/firedancer \n\
+                --edge-offset -o                : Required if the mode is edge, this defines the number of slots to minimize the initial ledger on each side of the epoch boundary. \n\
+                --start-slot -s                 : Required if the mode is exact, this defines the slot to start reading from. \n\
+                --end-slot -e                   : Required if the mode is exact, this defines the slot to end reading. \n\
+                --mode -m                       : Method to minimize the initial ledger. Either as an offset around an epoch edge, or defined as an exact start and end slot. Default: exact. Choose: edge|exact. \n\
                 --is-verify -v [Optional]       : If passed, use solana-ledger-tool to verify created ledgers. Default: false. \n\
                 --slots-in-epoch -i [Optional]  : Slot count for an epoch in the defined network. Default: 432_000. \n\
                 --gigantic-pages -g [Optional]  : Number of gigantic pages. Default: 128 \n\
@@ -135,18 +140,18 @@ usage() {
 
   elif [[ $1 == "all" ]]; then
     echo -e "Usage: $0 all \n\
-                --network -n                    : Solana network to download the ledger from. Choose: mainnet|testnet|internal. \n\
-                --mode -m                       : Method to minimize the ledger. Either as an offset around an epoch edge, or defined as an exact start and end slot. Choose: edge|exact. \n\
+                --network -n                    : Solana network to download the ledger from. Choose: mainnet|testnet|internal. \n\                
                 --ledger -l                     : Directory where the initial ledger can be found. \n\
                 --ledger-min -z                 : Directory where the minimized ledger should be placed. \n\
-                --edge-offset -o                : Required if the mode is edge, this defines the number of slots to minimize on each side of the epoch boundary. \n\
-                --start-slot -s                 : Required if the mode is exact and repetitions is once, this defines the slot to start minimization. \n\
-                --end-slot -e                   : Required if the mode is exact and repetitions is once, this defines the slot to end minimization. \n\
-                --repetitions -r                : Required if the mode is exact, running with multiple repetitions repeats the minify and replay for new slot ranges until the entire ledger is checked. Choose: once|multiple. \n\
-                --rep-sz -w [Optional]          : Maximum size of each repetition \n\
                 --solana-build-dir -d           : Path to the solana build directory. E.g. /home/fd_user/solana/target/debug \n\
                 --firedancer-root-dir -f        : Path to the firedancer root directory. \n\
+                --edge-offset -o                : Required if the mode is edge, this defines the number of slots to minimize the initial ledger on each side of the epoch boundary. \n\
+                --start-slot -s                 : Defines the slot to start reading from. \n\
+                --end-slot -e                   : Defines the slot to end reading. \n\
+                --repetitions -r                : Required if the mode is exact, running with multiple repetitions repeats the minify and replay for new slot ranges until the entire ledger is checked. Choose: once|multiple. \n\                
+                --rep-sz -w [Optional]          : Maximum size of each repetition \n\
                 --no-fetch [Optional]           : Run all the commands excluding fetch-recent. Just pass in the ledger directories. \n\
+                --mode -m [Optional]            : Method to minimize the initial ledger. Either as an offset around an epoch edge, or defined as an exact start and end slot. Default: exact. Choose: edge|exact. \n\
                 --is-verify -v [Optional]       : If passed, use solana-ledger-tool to verify created ledgers. Default: false. \n\
                 --slots-in-epoch -i [Optional]  : Slot count for an epoch in the defined network. Default: 432_000. \n\
                 --gigantic-pages -g [Optional]  : Number of gigantic pages. Default: 128 \n\
@@ -169,7 +174,7 @@ usage() {
                     --repetitions once --mode edge|exact: Run the full cycle of commands once
                     --repetitions multiple --mode exact : Replay the entire ledger in multiple iterations 
                                                         --start-slot and --end-slot define the absolute bounds to replay the ledger
-                                                        If they are not specified (recommended), the check range is [first_rooted(max(snap, rocksdb_min)), last_rooted(rocksdb_max)] 
+                                                        If start_slot and end_slot are not specified (recommended), the check range is [first_rooted(max(snap, rocksdb_min)), last_rooted(rocksdb_max)] 
                                                         The replay looks for a mismatch from start_slot toward end_slot, until it encounters a mismatch. 
                                                         Then, it would start again from mismatch+1, repeating the cycle.
                                                         Depending on where these bank hash mismatches are encountered, 
@@ -177,7 +182,7 @@ usage() {
                                                         which translates into the uploads [Abhm-1, Abhm+1], [Bbhm-1, Bbhm+1], ..., [Zbhm-1, Zbhm+1]
                     --repetitions multiple --mode exact --rep-sz 100: Breaks the ledger up into multiple repetitions of the specified size
                                                                     This has the same output as running without --rep-sz, but breaks the process up into multiple iterations of some rep size 
-                                                                    Passing --rep-sz is only recommended if the ledger is too large, since this takes additional time to run
+                                                                    --rep-sz is not recommended by default, and should only be passed if the ledger is too large, since this takes additional time to run
                                                                     (re: solana-ledger-tool possibly has some issues with minimizing larger ledgers?)
                                                                     For example, running this against a ledger with rocskdb bounds of size S, 
                                                                     will break into chunks [first_rooted(start_slot), last_rooted(start_slot + S/n - 1)], [first_rooted(start_slot + S/n), last_rooted(start_slot + 2S/n - 1)] ...
@@ -258,6 +263,7 @@ parse_minify_options() {
 
   # Defaults
   IS_VERIFY="false"
+  MODE="exact"
   SLOTS_IN_EPOCH=432000
   GIGANTIC_PAGES=128
   INDEX_MAX=100000000
@@ -548,6 +554,7 @@ parse_all_options() {
   # Defaults
   IS_VERIFY="false"
   NO_FETCH="false"
+  MODE="exact"
   SLOTS_IN_EPOCH=432000
   UPLOAD_URL=""
   GIGANTIC_PAGES=128

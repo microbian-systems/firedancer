@@ -916,8 +916,19 @@ fd_sbpf_program_load_test_run( void const *         _bin,
 
   elf_effects->entry_pc = prog->entry_pc;
 
-  ulong actual_end = FD_SCRATCH_ALLOC_FINI( l, 1UL );
 
+  pb_size_t calldests_sz = (pb_size_t) fd_sbpf_calldests_cnt( prog->calldests);
+  elf_effects->calldests_count = calldests_sz;
+  elf_effects->calldests = FD_SCRATCH_ALLOC_APPEND(l, 8UL, calldests_sz * sizeof(uint64_t));
+
+  ulong i = 0;
+  for(ulong target_pc = fd_sbpf_calldests_const_iter_init(prog->calldests); !fd_sbpf_calldests_const_iter_done(target_pc);
+  target_pc = fd_sbpf_calldests_const_iter_next(prog->calldests, target_pc)) {
+    elf_effects->calldests[i] = target_pc;
+    ++i;
+  }
+
+  ulong actual_end = FD_SCRATCH_ALLOC_FINI( l, 1UL );
 
   *output = elf_effects;
   return actual_end - (ulong) output_buf;

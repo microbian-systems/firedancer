@@ -129,6 +129,8 @@ typedef struct fd_exec_test_elf_loader_effects {
     uint64_t text_off;
     /* program entry point */
     uint64_t entry_pc;
+    pb_size_t calldests_count;
+    uint64_t *calldests; /* TODO: add more fields */
 } fd_exec_test_elf_loader_effects_t;
 
 
@@ -146,7 +148,7 @@ extern "C" {
 #define FD_EXEC_TEST_INSTR_CONTEXT_INIT_DEFAULT  {false, {0}, false, {0}, 0, NULL, 0, NULL, NULL, false, 0, false, FD_EXEC_TEST_TXN_CONTEXT_INIT_DEFAULT, false, FD_EXEC_TEST_SLOT_CONTEXT_INIT_DEFAULT, false, FD_EXEC_TEST_EPOCH_CONTEXT_INIT_DEFAULT}
 #define FD_EXEC_TEST_INSTR_EFFECTS_INIT_DEFAULT  {0, false, 0, 0, NULL, 0}
 #define FD_EXEC_TEST_INSTR_FIXTURE_INIT_DEFAULT  {false, FD_EXEC_TEST_INSTR_CONTEXT_INIT_DEFAULT, false, FD_EXEC_TEST_INSTR_EFFECTS_INIT_DEFAULT}
-#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT {0, NULL, 0, 0, 0}
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT {0, NULL, 0, 0, 0, 0, NULL}
 #define FD_EXEC_TEST_FEATURE_SET_INIT_ZERO       {0, NULL}
 #define FD_EXEC_TEST_ACCT_STATE_INIT_ZERO        {false, {0}, false, 0, NULL, false, 0, false, 0, false, {0}}
 #define FD_EXEC_TEST_EPOCH_CONTEXT_INIT_ZERO     {false, FD_EXEC_TEST_FEATURE_SET_INIT_ZERO}
@@ -156,7 +158,7 @@ extern "C" {
 #define FD_EXEC_TEST_INSTR_CONTEXT_INIT_ZERO     {false, {0}, false, {0}, 0, NULL, 0, NULL, NULL, false, 0, false, FD_EXEC_TEST_TXN_CONTEXT_INIT_ZERO, false, FD_EXEC_TEST_SLOT_CONTEXT_INIT_ZERO, false, FD_EXEC_TEST_EPOCH_CONTEXT_INIT_ZERO}
 #define FD_EXEC_TEST_INSTR_EFFECTS_INIT_ZERO     {0, false, 0, 0, NULL, 0}
 #define FD_EXEC_TEST_INSTR_FIXTURE_INIT_ZERO     {false, FD_EXEC_TEST_INSTR_CONTEXT_INIT_ZERO, false, FD_EXEC_TEST_INSTR_EFFECTS_INIT_ZERO}
-#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO {0, NULL, 0, 0, 0}
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO {0, NULL, 0, 0, 0, 0, NULL}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define FD_EXEC_TEST_FEATURE_SET_FEATURES_TAG    1
@@ -190,6 +192,7 @@ extern "C" {
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_TEXT_CNT_TAG 4
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_TEXT_OFF_TAG 5
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_ENTRY_PC_TAG 6
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_CALLDESTS_TAG 7
 
 /* Struct field encoding specification for nanopb */
 #define FD_EXEC_TEST_FEATURE_SET_FIELDLIST(X, a) \
@@ -270,7 +273,8 @@ X(a, STATIC,   SINGULAR, UINT64,   rodata_sz,         2) \
 X(a, POINTER,  SINGULAR, BYTES,    text,              3) \
 X(a, STATIC,   SINGULAR, UINT64,   text_cnt,          4) \
 X(a, STATIC,   SINGULAR, UINT64,   text_off,          5) \
-X(a, STATIC,   SINGULAR, UINT64,   entry_pc,          6)
+X(a, STATIC,   SINGULAR, UINT64,   entry_pc,          6) \
+X(a, POINTER,  REPEATED, UINT64,   calldests,         7)
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_CALLBACK NULL
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_DEFAULT NULL
 

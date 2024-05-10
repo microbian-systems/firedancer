@@ -112,6 +112,17 @@ message InstrFixture {
     InstrEffects output = 2;
 }
 
+message ELFBinary {
+    bytes data = 1
+        [(nanopb).type = FT_POINTER];
+}
+
+message ELFLoaderCtx {
+    ELFBinary elf = 1;
+    FeatureSet features = 2;
+}
+
+// Captures the results of a elf binary load.
 message ELFLoaderEffects {
     // loaded program rodata
     // bytes rodata = 1

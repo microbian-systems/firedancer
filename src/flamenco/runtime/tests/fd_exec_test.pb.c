@@ -33,6 +33,12 @@ PB_BIND(FD_EXEC_TEST_INSTR_EFFECTS, fd_exec_test_instr_effects_t, AUTO)
 PB_BIND(FD_EXEC_TEST_INSTR_FIXTURE, fd_exec_test_instr_fixture_t, AUTO)
 
 
+PB_BIND(FD_EXEC_TEST_ELF_BINARY, fd_exec_test_elf_binary_t, AUTO)
+
+
+PB_BIND(FD_EXEC_TEST_ELF_LOADER_CTX, fd_exec_test_elf_loader_ctx_t, AUTO)
+
+
 PB_BIND(FD_EXEC_TEST_ELF_LOADER_EFFECTS, fd_exec_test_elf_loader_effects_t, AUTO)
 
 

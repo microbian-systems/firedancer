@@ -866,12 +866,16 @@ fd_exec_instr_test_run( fd_exec_instr_test_runner_t *        runner,
 
 
 ulong
-fd_sbpf_program_load_test_run( void const *         _bin,
-                               ulong                elf_sz,
+fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
                                fd_exec_test_elf_loader_effects_t ** output,
                                void *                               output_buf,
                                ulong                                output_bufsz ){
   fd_sbpf_elf_info_t info;
+  if ( FD_UNLIKELY( !input->has_elf) ){
+    return 0UL;
+  }
+  void const * _bin = input->elf.data->bytes;
+  ulong elf_sz = input->elf.data->size;
   if( FD_UNLIKELY( !fd_sbpf_elf_peek( &info, _bin, elf_sz ) ) ) {
     return 0UL;
   }

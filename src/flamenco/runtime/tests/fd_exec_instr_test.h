@@ -72,8 +72,7 @@ fd_exec_instr_test_run( fd_exec_instr_test_runner_t *        runner,
                         ulong                                output_bufsz );
 
 ulong
-fd_sbpf_program_load_test_run( void const *         _bin,
-                               ulong                elf_sz,
+fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
                                fd_exec_test_elf_loader_effects_t ** output,
                                void *                               output_buf,
                                ulong                                output_bufsz );

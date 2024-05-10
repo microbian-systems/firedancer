@@ -143,13 +143,21 @@ sol_compat_elf_loader_v1( uchar *       out,
   fd_scratch_attach( smem, fmem, smax, 64UL );
   fd_scratch_push();
 
+  pb_istream_t istream = pb_istream_from_buffer( in, in_sz );
+  fd_exec_test_elf_loader_ctx_t input[1] = {0};
+  int decode_ok = pb_decode_ex( &istream, &fd_exec_test_elf_loader_ctx_t_msg, input, PB_DECODE_NOINIT );
+  if( !decode_ok ) {
+    pb_release( &fd_exec_test_elf_loader_ctx_t_msg, input );
+    return 0;
+  }
+
   fd_exec_test_elf_loader_effects_t * output = NULL;
   do {
     ulong out_bufsz = 100000000;
     void * out0 = fd_scratch_prepare( 1UL );
     assert( out_bufsz < fd_scratch_free() );
     fd_scratch_publish( (void *)( (ulong)out0 + out_bufsz ) );
-    ulong out_used = fd_sbpf_program_load_test_run( in, in_sz, &output, out0, out_bufsz );
+    ulong out_used = fd_sbpf_program_load_test_run( input, &output, out0, out_bufsz );
     if( FD_UNLIKELY( !out_used ) ) {
       output = NULL;
       break;
@@ -167,7 +175,7 @@ sol_compat_elf_loader_v1( uchar *       out,
     }
   }
 
-
+  pb_release( &fd_exec_test_elf_loader_ctx_t_msg, input );
   fd_scratch_pop();
   fd_scratch_detach( NULL );  
   return ok;

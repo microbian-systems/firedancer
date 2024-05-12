@@ -5,7 +5,7 @@
 
 rep_fd_ledger_dump="$FIREDANCER/dump"
 rep_temp_ledger_upload="$FIREDANCER/.ledger-min"
-rep_run_ledger_tests="src/flamenco/runtime/tests/run_ledger_tests.sh"
+# rep_run_ledger_tests="src/flamenco/runtime/tests/run_ledger_tests.sh"
 
 if [ -z "$ROOT_DIR" ]; then
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -13,9 +13,9 @@ fi
 
 rm -rf "$rep_fd_ledger_dump"
 mkdir -p "$rep_fd_ledger_dump"
-cp -r "$LEDGER_MIN" "$rep_fd_ledger_dump"
+cp -rL "$LEDGER_MIN" "$rep_fd_ledger_dump"
 
-rep_snapshot=$(find "$LEDGER_MIN" -type f -name "snapshot-*" | head -n 1)
+rep_snapshot=$(find -L "$LEDGER_MIN" -type f -name "snapshot-*" | head -n 1)
 rep_snapshot_basename=$(basename "$rep_snapshot")
 rep_ledger_min_basename=$(basename "$LEDGER_MIN")
 
@@ -27,7 +27,27 @@ fi
 
 cd "$FIREDANCER" || exit
 set -x
-replay_output=$("$rep_run_ledger_tests" -l "$rep_ledger_min_basename" -s "$rep_snapshot_basename" -e "$END_SLOT" -p $GIGANTIC_PAGES -m $INDEX_MAX 2>&1)
+
+rep_replay_start_time=$(date +%s)
+
+# replay_output=$("$rep_run_ledger_tests" -l "$rep_ledger_min_basename" -s "$rep_snapshot_basename" -e "$END_SLOT" -p $GIGANTIC_PAGES -m $INDEX_MAX 2>&1)
+replay_output=$(build/native/gcc/bin/fd_ledger --reset 1 \
+                               --cmd replay \
+                               --rocksdb dump/$rep_ledger_min_basename/rocksdb \
+                               --index-max $INDEX_MAX \
+                               --end-slot "$END_SLOT" \
+                               --txnmax 100 \
+                               --page-cnt $GIGANTIC_PAGES \
+                               --verify-acc-hash 1 \
+                               --snapshot dump/$rep_ledger_min_basename/$rep_snapshot_basename \
+                               --slot-history 5000 \
+                               --copy-txn-status 0 \
+                               --allocator wksp \
+                               --on-demand-block-ingest 1 \
+                               --tile-cpus 5-21 \
+                               --use-funk-wksp 0 2>&1)
+
+rep_replay_end_time=$(date +%s)
 set +x
 echo "$replay_output"
 
@@ -43,6 +63,8 @@ if [ -z "$rep_mismatch_slot" ]; then
   START_SLOT=$((END_SLOT + 1))
 else
   echo "[-] ledger test failed"
+  echo "replay_slots_before_mismatch=$((rep_mismatch_slot - START_SLOT))" > dump/$rep_ledger_min_basename/metadata
+  echo "replay_time=$((rep_replay_end_time - rep_replay_start_time))" >> dump/$rep_ledger_min_basename/metadata
   echo "[-] mismatch_slot: $rep_mismatch_slot"
   echo "[-] mismatch_msg: $rep_mismatch_msg"
 

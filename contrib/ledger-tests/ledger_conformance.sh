@@ -32,10 +32,12 @@ one_repetition() {
     source $ROOT_DIR/minify.sh
   else
     # If REP_SZ is not specified, load the entire ledger in for the replay
-    minimized_snapshot=$(find "$LEDGER" -maxdepth 1 -name 'snapshot-*.tar.zst' -print0 | xargs -0 ls -t | head -n 1)
-    cp "$minimized_snapshot" "$LEDGER_MIN"
-    cp $LEDGER/gen* "$LEDGER_MIN"
-    cp -r "$LEDGER/rocksdb" "$LEDGER_MIN"
+    local minimized_snapshot=$(find "$LEDGER" -maxdepth 1 -name 'snapshot-*.tar.zst' -print0 | xargs -0 ls -t | head -n 1)
+    local minimized_snapshot_basename=$(basename "$minimized_snapshot")
+    ln -s "$minimized_snapshot" "$LEDGER_MIN/$minimized_snapshot_basename"
+    ln -s $LEDGER/genesis.bin "$LEDGER_MIN/genesis.bin"
+    ln -s $LEDGER/genesis.tar.bz2 "$LEDGER_MIN/genesis.tar.bz2"    
+    ln -s "$LEDGER/rocksdb" "$LEDGER_MIN/rocksdb"
   fi  
   source $ROOT_DIR/replay.sh
 }

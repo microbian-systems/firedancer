@@ -871,7 +871,7 @@ fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
                                void *                               output_buf,
                                ulong                                output_bufsz ){
   fd_sbpf_elf_info_t info;
-  if ( FD_UNLIKELY( !input->has_elf) ){
+  if ( FD_UNLIKELY( !input->has_elf || !input->elf.data ) ){
     return 0UL;
   }
   void const * _bin = input->elf.data->bytes;
@@ -910,10 +910,10 @@ fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
   fd_memset( elf_effects, 0, sizeof(fd_exec_test_elf_loader_effects_t) );
   elf_effects->rodata_sz = prog->rodata_sz;
 
-  ulong text_sz = prog->text_cnt * sizeof(fd_sbpf_instr_t);
-  elf_effects->text = FD_SCRATCH_ALLOC_APPEND(l, 8UL, PB_BYTES_ARRAY_T_ALLOCSIZE( text_sz )); // TODO: text should be within rodata, figure out how to point to it instead?
-  elf_effects->text->size = (pb_size_t) text_sz;
-  fd_memcpy( &(elf_effects->text->bytes), prog->text, text_sz );
+  // Load rodata section
+  elf_effects->rodata = FD_SCRATCH_ALLOC_APPEND(l, 8UL, PB_BYTES_ARRAY_T_ALLOCSIZE( prog->rodata_sz ));
+  elf_effects->rodata->size = (pb_size_t) prog->rodata_sz;
+  fd_memcpy( &(elf_effects->rodata->bytes), prog->rodata, prog->rodata_sz );
 
   elf_effects->text_cnt = prog->text_cnt;
   elf_effects->text_off = prog->text_off;

@@ -132,9 +132,8 @@ typedef struct fd_exec_test_elf_loader_ctx {
 
 /* Captures the results of a elf binary load. */
 typedef struct fd_exec_test_elf_loader_effects {
-    /* loaded program rodata
- bytes rodata = 1
-    [(nanopb).type = FT_POINTER]; */
+    /* loaded program rodata */
+    pb_bytes_array_t *rodata;
     uint64_t rodata_sz;
     pb_bytes_array_t *text;
     uint64_t text_cnt;
@@ -162,7 +161,7 @@ extern "C" {
 #define FD_EXEC_TEST_INSTR_FIXTURE_INIT_DEFAULT  {false, FD_EXEC_TEST_INSTR_CONTEXT_INIT_DEFAULT, false, FD_EXEC_TEST_INSTR_EFFECTS_INIT_DEFAULT}
 #define FD_EXEC_TEST_ELF_BINARY_INIT_DEFAULT     {NULL}
 #define FD_EXEC_TEST_ELF_LOADER_CTX_INIT_DEFAULT {false, FD_EXEC_TEST_ELF_BINARY_INIT_DEFAULT, false, FD_EXEC_TEST_FEATURE_SET_INIT_DEFAULT}
-#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT {0, NULL, 0, 0, 0, 0, NULL}
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT {NULL, 0, NULL, 0, 0, 0, 0, NULL}
 #define FD_EXEC_TEST_FEATURE_SET_INIT_ZERO       {0, NULL}
 #define FD_EXEC_TEST_ACCT_STATE_INIT_ZERO        {false, {0}, false, 0, NULL, false, 0, false, 0, false, {0}}
 #define FD_EXEC_TEST_EPOCH_CONTEXT_INIT_ZERO     {false, FD_EXEC_TEST_FEATURE_SET_INIT_ZERO}
@@ -174,7 +173,7 @@ extern "C" {
 #define FD_EXEC_TEST_INSTR_FIXTURE_INIT_ZERO     {false, FD_EXEC_TEST_INSTR_CONTEXT_INIT_ZERO, false, FD_EXEC_TEST_INSTR_EFFECTS_INIT_ZERO}
 #define FD_EXEC_TEST_ELF_BINARY_INIT_ZERO        {NULL}
 #define FD_EXEC_TEST_ELF_LOADER_CTX_INIT_ZERO    {false, FD_EXEC_TEST_ELF_BINARY_INIT_ZERO, false, FD_EXEC_TEST_FEATURE_SET_INIT_ZERO}
-#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO {0, NULL, 0, 0, 0, 0, NULL}
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO {NULL, 0, NULL, 0, 0, 0, 0, NULL}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define FD_EXEC_TEST_FEATURE_SET_FEATURES_TAG    1
@@ -206,6 +205,7 @@ extern "C" {
 #define FD_EXEC_TEST_ELF_BINARY_DATA_TAG         1
 #define FD_EXEC_TEST_ELF_LOADER_CTX_ELF_TAG      1
 #define FD_EXEC_TEST_ELF_LOADER_CTX_FEATURES_TAG 2
+#define FD_EXEC_TEST_ELF_LOADER_EFFECTS_RODATA_TAG 1
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_RODATA_SZ_TAG 2
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_TEXT_TAG 3
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_TEXT_CNT_TAG 4
@@ -301,6 +301,7 @@ X(a, STATIC,   OPTIONAL, MESSAGE,  features,          2)
 #define fd_exec_test_elf_loader_ctx_t_features_MSGTYPE fd_exec_test_feature_set_t
 
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_FIELDLIST(X, a) \
+X(a, POINTER,  SINGULAR, BYTES,    rodata,            1) \
 X(a, STATIC,   SINGULAR, UINT64,   rodata_sz,         2) \
 X(a, POINTER,  SINGULAR, BYTES,    text,              3) \
 X(a, STATIC,   SINGULAR, UINT64,   text_cnt,          4) \

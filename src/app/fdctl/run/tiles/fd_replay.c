@@ -1,10 +1,9 @@
 #define _GNU_SOURCE 
 
-#include "tiles.h"
-
 #include "generated/replay_seccomp.h"
 #include "../../../../util/fd_util.h"
 #include "../../../../util/tile/fd_tile_private.h"
+#include "../../../../disco/tiles.h"
 #include "../../../../disco/shred/fd_stake_ci.h"
 #include "../../../../disco/topo/fd_pod_format.h"
 #include "../../../../disco/tvu/fd_replay.h"

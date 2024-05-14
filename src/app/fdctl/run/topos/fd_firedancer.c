@@ -1,7 +1,7 @@
 /* Firedancer topology used for testing the full validator. 
    Associated test script: test-firedancer.sh */
 #include "topos.h"
-#include "../tiles/tiles.h"
+#include "../../../../disco/tiles.h"
 #include "../../config.h"
 #include "../../../../ballet/shred/fd_shred.h"
 #include "../../../../disco/topo/fd_topob.h"
@@ -32,23 +32,34 @@ parse_snapshot_slot( char const * snapshot, char const * incremental ) {
 void
 fd_topo_firedancer( config_t * _config ) { 
   config_t * config = (config_t *)_config;
+
   ulong net_tile_cnt    = config->layout.net_tile_count;
   ulong shred_tile_cnt  = config->layout.shred_tile_count;
+  ulong quic_tile_cnt   = config->layout.quic_tile_count;
+  ulong verify_tile_cnt = config->layout.verify_tile_count;
+
   ulong replay_tpool_thread_count = config->tiles.replay.tpool_thread_count;
 
   fd_topo_t * topo = { fd_topob_new( &config->topo, config->name ) };
 
   /*             topo, name */
-  fd_topob_wksp( topo, "net_shred" );
+  fd_topob_wksp( topo, "net_shred"  );
   fd_topob_wksp( topo, "net_gossip" );
   fd_topob_wksp( topo, "net_repair" );
   fd_topob_wksp( topo, "net_quic"   );
+
+  fd_topob_wksp( topo, "quic_verify"  );
+  fd_topob_wksp( topo, "verify_dedup" );
+  fd_topob_wksp( topo, "dedup_pack"   );
 
   fd_topob_wksp( topo, "shred_storei" );
   fd_topob_wksp( topo, "stake_out"    );
   fd_topob_wksp( topo, "metric_in"    );
 
   fd_topob_wksp( topo, "poh_shred" );
+
+  fd_topob_wksp( topo, "quic_sign" );
+  fd_topob_wksp( topo, "sign_quic" );
 
   fd_topob_wksp( topo, "shred_sign" );
   fd_topob_wksp( topo, "sign_shred" );
@@ -67,6 +78,9 @@ fd_topo_firedancer( config_t * _config ) {
   fd_topob_wksp( topo, "replay_poh" );
 
   fd_topob_wksp( topo, "net"        );
+  fd_topob_wksp( topo, "quic"       );
+  fd_topob_wksp( topo, "verify"     );
+  fd_topob_wksp( topo, "dedup"      );
   fd_topob_wksp( topo, "shred"      );
   fd_topob_wksp( topo, "storei"     );
   fd_topob_wksp( topo, "sign"       );
@@ -85,13 +99,19 @@ fd_topo_firedancer( config_t * _config ) {
   FOR(net_tile_cnt)    fd_topob_link( topo, "net_gossip",   "net_gossip",   0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
   FOR(net_tile_cnt)    fd_topob_link( topo, "net_repair",   "net_repair",   0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
   FOR(net_tile_cnt)    fd_topob_link( topo, "net_quic",     "net_quic",     0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
+  FOR(quic_tile_cnt)   fd_topob_link( topo, "quic_net",     "net_quic",     0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
   FOR(net_tile_cnt)    fd_topob_link( topo, "net_shred",    "net_shred",    0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
   FOR(shred_tile_cnt)  fd_topob_link( topo, "shred_net",    "net_shred",    0,        config->tiles.net.send_buffer_size,       FD_NET_MTU,                    1UL );
+  FOR(quic_tile_cnt)   fd_topob_link( topo, "quic_verify",  "quic_verify",  1,        config->tiles.verify.receive_buffer_size, 0UL,                           config->tiles.quic.txn_reassembly_count );
+  FOR(verify_tile_cnt) fd_topob_link( topo, "verify_dedup", "verify_dedup", 0,        config->tiles.verify.receive_buffer_size, FD_TPU_DCACHE_MTU,             1UL );
+  /**/                 fd_topob_link( topo, "dedup_pack",   "dedup_pack",   0,        config->tiles.verify.receive_buffer_size, FD_TPU_DCACHE_MTU,             1UL );
 
   /**/                 fd_topob_link( topo, "stake_out",    "stake_out",    0,        128UL,                                    32UL + 40200UL * 40UL,         1UL );
   /* See long comment in fd_shred.c for an explanation about the size of this dcache. */
   FOR(shred_tile_cnt)  fd_topob_link( topo, "shred_storei", "shred_storei", 0,        65536UL,                                  4UL*FD_SHRED_STORE_MTU,        4UL+config->tiles.shred.max_pending_shred_sets );
 
+  FOR(quic_tile_cnt)   fd_topob_link( topo, "quic_sign",    "quic_sign",    0,        128UL,                                    130UL,                         1UL );
+  FOR(quic_tile_cnt)   fd_topob_link( topo, "sign_quic",    "sign_quic",    0,        128UL,                                    64UL,                          1UL );
   FOR(shred_tile_cnt)  fd_topob_link( topo, "shred_sign",   "shred_sign",   0,        128UL,                                    32UL,                          1UL );
   FOR(shred_tile_cnt)  fd_topob_link( topo, "sign_shred",   "sign_shred",   0,        128UL,                                    64UL,                          1UL );
 
@@ -128,6 +148,9 @@ fd_topo_firedancer( config_t * _config ) {
 
   /*                                             topo, tile_name, tile_wksp, cnc_wksp,    metrics_wksp, cpu_idx,                       is_labs, out_link,       out_link_kind_id */
   FOR(net_tile_cnt)                fd_topob_tile( topo, "net",     "net",     "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       NULL,           0UL );
+  FOR(quic_tile_cnt)               fd_topob_tile( topo, "quic",    "quic",    "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "quic_verify",  i   );
+  FOR(verify_tile_cnt)             fd_topob_tile( topo, "verify",  "verify",  "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "verify_dedup", i   );
+  /**/                             fd_topob_tile( topo, "dedup",   "dedup",   "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "dedup_pack",   0UL );
   FOR(shred_tile_cnt)              fd_topob_tile( topo, "shred",   "shred",   "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "shred_storei", i   );
   /**/                             fd_topob_tile( topo, "gossip",  "gossip",  "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "gossip_net",   0UL );
   /**/                             fd_topob_tile( topo, "repair",  "repair",  "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "repair_store", 0UL );
@@ -173,6 +196,14 @@ fd_topo_firedancer( config_t * _config ) {
                        fd_topob_tile_in(  topo, "net",     i,            "metric_in", "shred_net",    j,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   FOR(net_tile_cnt)    fd_topob_tile_out( topo, "net",     i,                         "net_shred",    i                                                  );
 
+  FOR(quic_tile_cnt) for( ulong j=0UL; j<net_tile_cnt; j++ )
+                       fd_topob_tile_in(  topo, "quic",    i,            "metric_in", "net_quic",     j,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  FOR(quic_tile_cnt)   fd_topob_tile_out( topo, "quic",    i,                         "quic_net",     i                                                  );
+  /* All verify tiles read from all QUIC tiles, packets are round robin. */
+  FOR(verify_tile_cnt) for( ulong j=0UL; j<quic_tile_cnt; j++ )
+                       fd_topob_tile_in(  topo, "verify",  i,            "metric_in", "quic_verify",  j,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers, verify tiles may be overrun */
+  FOR(verify_tile_cnt) fd_topob_tile_in(  topo, "dedup",   0UL,          "metric_in", "verify_dedup", i,            FD_TOPOB_RELIABLE,   FD_TOPOB_POLLED );
+
   FOR(net_tile_cnt)    fd_topob_tile_in(  topo, "net",     i,            "metric_in", "gossip_net",   0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   FOR(net_tile_cnt)    fd_topob_tile_in(  topo, "net",     i,            "metric_in", "repair_net",   0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
 
@@ -198,6 +229,12 @@ fd_topo_firedancer( config_t * _config ) {
      so there's at most one fragment in flight at a time anyway.  The
      sign links are also not polled by the mux, instead the tiles will
      read the sign responses out of band in a dedicated spin loop. */
+  for( ulong i=0UL; i<quic_tile_cnt; i++ ) {
+    /**/               fd_topob_tile_in(  topo, "sign",   0UL,           "metric_in", "quic_sign",      i,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   );
+    /**/               fd_topob_tile_out( topo, "quic",     i,                        "quic_sign",      i                                                  );
+    /**/               fd_topob_tile_in(  topo, "quic",     i,           "metric_in", "sign_quic",      i,          FD_TOPOB_UNRELIABLE, FD_TOPOB_UNPOLLED );
+    /**/               fd_topob_tile_out( topo, "sign",   0UL,                        "sign_quic",      i                                                  );
+  }
 
   for( ulong i=0UL; i<shred_tile_cnt; i++ ) {
     /**/               fd_topob_tile_in(  topo, "sign",   0UL,           "metric_in", "shred_sign",    i,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   );
@@ -228,7 +265,8 @@ fd_topo_firedancer( config_t * _config ) {
   /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "gossip_pack",   0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "replay_poh",    0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   /**/                 fd_topob_tile_out( topo, "bhole",  0UL,                        "poh_shred",     0UL                                                  );
-  FOR(net_tile_cnt)    fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "net_quic",      i,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "dedup_pack",    0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "gossip_pack",  0UL,          FD_TOPOB_RELIABLE,   FD_TOPOB_POLLED );
 
   for( ulong i=0UL; i<topo->tile_cnt; i++ ) {
     fd_topo_tile_t * tile = &topo->tiles[ i ];
@@ -251,6 +289,28 @@ fd_topo_firedancer( config_t * _config ) {
       tile->net.repair_intake_listen_port      = config->tiles.repair.repair_intake_listen_port;
 
     } else if( FD_UNLIKELY( !strcmp( tile->name, "netmux" ) ) ) {
+
+    } else if( FD_UNLIKELY( !strcmp( tile->name, "quic" ) ) ) {
+      fd_memcpy( tile->quic.src_mac_addr, config->tiles.net.mac_addr, 6 );
+      strncpy( tile->quic.identity_key_path, config->consensus.identity_path, sizeof(tile->quic.identity_key_path) );
+
+      tile->quic.depth                          = topo->links[ tile->out_link_id_primary ].depth;
+      tile->quic.reasm_cnt                      = config->tiles.quic.txn_reassembly_count;
+      tile->quic.max_concurrent_connections     = config->tiles.quic.max_concurrent_connections;
+      tile->quic.max_concurrent_handshakes      = config->tiles.quic.max_concurrent_handshakes;
+      tile->quic.max_inflight_quic_packets      = config->tiles.quic.max_inflight_quic_packets;
+      tile->quic.tx_buf_size                    = config->tiles.quic.tx_buf_size;
+      tile->quic.ip_addr                        = config->tiles.net.ip_addr;
+      tile->quic.quic_transaction_listen_port   = config->tiles.quic.quic_transaction_listen_port;
+      tile->quic.idle_timeout_millis            = config->tiles.quic.idle_timeout_millis;
+      tile->quic.retry                          = config->tiles.quic.retry;
+      tile->quic.max_concurrent_streams_per_connection = config->tiles.quic.max_concurrent_streams_per_connection;
+      tile->quic.stream_pool_cnt                = config->tiles.quic.stream_pool_cnt;
+
+    } else if( FD_UNLIKELY( !strcmp( tile->name, "verify" ) ) ) {
+
+    } else if( FD_UNLIKELY( !strcmp( tile->name, "dedup" ) ) ) {
+      tile->dedup.tcache_depth = config->tiles.dedup.signature_cache_size;
 
     } else if( FD_UNLIKELY( !strcmp( tile->name, "shred" ) ) ) {
       fd_memcpy( tile->shred.src_mac_addr, config->tiles.net.mac_addr, 6 );

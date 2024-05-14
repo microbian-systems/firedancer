@@ -1,5 +1,4 @@
-#include "../../fdctl.h"
-#include "../../../../disco/poh/fd_poh_tile.h"
+#include "tiles.h"
 
 /* Let's say there was a computer, the "leader" computer, that acted as
    a bank.  Users could send it messages saying they wanted to deposit
@@ -314,6 +313,163 @@
 #include "../../../../disco/metrics/generated/fd_metrics_poh.h"
 #include "../../../../flamenco/leaders/fd_leaders.h"
 
+/* When we are becoming leader, and we think the prior leader might have
+   skipped their slot, we give them a grace period to finish.  In the
+   Solana Labs client this is called grace ticks.  This is a courtesy to
+   maintain network health, and is not strictly necessary.  It is
+   actually advantageous to us as new leader to take over right away and
+   give no grace period, since we could generate more fees.
+
+   Here we define the grace period to be two slots, which is taken from
+   Solana Labs directly. */
+#define GRACE_SLOTS (2UL)
+
+/* The maximum number of microblocks that pack is allowed to pack into a
+   single slot.  This is not consensus critical, and pack could, if we
+   let it, produce as many microblocks as it wants, and the slot would
+   still be valid.
+
+   We have this here instead so that PoH can estimate slot completion,
+   and keep the hashcnt up to date as pack progresses through packing
+   the slot.  If this upper bound was not enforced, PoH could tick to
+   the last hash of the slot and have no hashes left to mixin incoming
+   microblocks from pack, so this upper bound is a coordination
+   mechanism so that PoH can progress hashcnts while the slot is active,
+   and know that pack will not need those hashcnts later to do mixins. */
+#define MAX_MICROBLOCKS_PER_SLOT (16384UL)
+
+typedef struct {
+  fd_wksp_t * mem;
+  ulong       chunk0;
+  ulong       wmark;
+} fd_poh_in_ctx_t;
+
+typedef struct {
+  /* Static configuration determined at genesis creation time.  See
+     long comment above for more information. */
+  double hashcnt_duration_ns;
+  ulong  hashcnt_per_tick;
+  ulong  ticks_per_slot;
+
+  /* Derived from the above configuration, but we precompute it. */
+  ulong hashcnt_per_slot;
+
+  /* The current hashcnt of the proof of history, including hashes
+     we have been producing in the background while waiting for our
+     next leader slot.
+
+     Assuming a very aggressive future hashcnt rate of 5ns / hash,
+     this value would not overflow for about 3000 years. */
+  ulong hashcnt;
+
+  /* When we send a microblock on to the shred tile, we need to tell
+     it how many hashes there have been since the last microblock, so
+     this tracks the hashcnt of the last published microblock.
+
+     As well, the next leader slot that we can transition into will
+     always be strictly more than the slot this hashcnt is in, otherwise
+     we could potentially become leader for a slot twice. */
+  ulong last_hashcnt;
+
+  /* See how this field is used below.  If we have sequential leader
+     slots, we don't reset the expected slot end time between the two,
+     to prevent clock drift.  If we didn't do this, our 2nd slot would
+     end 400ms + `time_for_replay_to_move_slot_and_reset_poh` after
+     our 1st, rather than just strictly 400ms. */
+  ulong expect_sequential_leader_slot;
+
+  /* The PoH tile must never drop microblocks that get committed by the
+     bank, so it needs to always be able to mixin a microblock hash.
+     Mixing in requires incrementing the hashcnt, so we need to ensure
+     at all times that there is enough hascnts left in the slot to
+     mixin whatever future microblocks pack might produce for it.
+
+     This value tracks that.  At any time, max_microblocks_per_slot
+     - microblocks_lower_bound is an upper bound on the maximum number
+     of microblocks that might still be received in this slot. */
+  ulong microblocks_lower_bound;
+
+  /* Constant, fixed at initialization.  The maximum number of
+     microblocks that the pack tile can publish in each slot. */
+  ulong max_microblocks_per_slot;
+
+  uchar __attribute__((aligned(32UL))) hash[ 32 ];
+
+  /* When we are not leader, we need to save the hashes that were
+     produced in case the prior leader skips.  If they skip, we will
+     replay these skipped hashes into our next leader bank so that
+     the slot hashes sysvar can be updated correctly.  We only need 150
+     of these, because that's what's required for consensus in the
+     sysvar. */
+  uchar skipped_slot_hashes[ 150 ][ 32 ];
+
+  /* The timestamp in nanoseconds of when the reset slot was received.
+     This is the timestamp we are building on top of to determine when
+     our next leader slot starts. */
+  long reset_slot_start_ns;
+
+  /* The hashcnt corresponding to the start of the current reset slot. */
+  ulong reset_slot_hashcnt;
+
+  /* The hashcnt at which our next leader slot begins, or ULONG max if
+     we have no known next leader slot. */
+  ulong next_leader_slot_hashcnt;
+
+  ulong bank_cnt;
+
+  /* If we currently are the leader according the clock AND we have
+     received the leader bank for the slot from the replay stage,
+     this value will be non-NULL.
+
+     Note that we might be inside our leader slot, but not have a bank
+     yet, in which case this will still be NULL.
+
+     It will be NULL for a brief race period between consecutive leader
+     slots, as we ping-pong back to replay stage waiting for a new bank.
+
+     Solana Labs refers to this as the "working bank". */
+  void const * current_leader_bank;
+
+  fd_sha256_t * sha256;
+
+  ulong stake_in_idx;
+  fd_stake_ci_t * stake_ci;
+
+  ulong pack_in_idx;
+
+  fd_pubkey_t identity_key;
+
+  /* The Solana Labs client needs to be notified when the leader changes,
+     so that they can resume the replay stage if it was suspended waiting. */
+  void * signal_leader_change;
+
+  /* These are temporarily set in during_frag so they can be used in
+     after_frag once the frag has been validated as not overrun. */
+  uchar _txns[ USHORT_MAX ];
+  fd_microblock_trailer_t * _microblock_trailer;
+
+  fd_poh_in_ctx_t bank_in[ 32 ];
+  fd_poh_in_ctx_t stake_in;
+  fd_poh_in_ctx_t pack_in;
+
+  fd_wksp_t * shred_out_mem;
+  ulong       shred_out_chunk0;
+  ulong       shred_out_wmark;
+  ulong       shred_out_chunk;
+
+  fd_frag_meta_t * pack_out_mcache;
+  ulong            pack_out_depth;
+  ulong            pack_out_seq;
+  fd_wksp_t *      pack_out_mem;
+  ulong            pack_out_chunk0;
+  ulong            pack_out_wmark;
+  ulong            pack_out_chunk;
+
+  fd_histf_t begin_leader_delay[ 1 ];
+  fd_histf_t first_microblock_delay[ 1 ];
+  fd_histf_t slot_done_delay[ 1 ];
+} fd_poh_ctx_t;
+
 /* The PoH recorder is implemented in Firedancer but for now needs to
    work with Solana Labs, so we have a locking scheme for them to
    co-operate.
@@ -340,69 +496,10 @@
    returned lock value back to zero, and the POH tile continues with its
    day. */
 
-typedef struct {
-  fd_poh_tile_ctx_t poh_tile_ctx;
-
-  /* If we currently are the leader according the clock AND we have
-     received the leader bank for the slot from the replay stage,
-     this value will be non-NULL.
-
-     Note that we might be inside our leader slot, but not have a bank
-     yet, in which case this will still be NULL.
-
-     It will be NULL for a brief race period between consecutive leader
-     slots, as we ping-pong back to replay stage waiting for a new bank.
-
-     Solana Labs refers to this as the "working bank". */
-  void const * current_leader_bank;
-
-  /* The Solana Labs client needs to be notified when the leader changes,
-     so that they can resume the replay stage if it was suspended waiting. */
-  void * signal_leader_change;
-} fd_poh_ctx_t;
-
 static fd_poh_ctx_t * fd_poh_global_ctx;
 
 static volatile ulong fd_poh_waiting_lock __attribute__((aligned(128UL)));
 static volatile ulong fd_poh_returned_lock __attribute__((aligned(128UL)));
-
-/* To help show correctness, functions that might be called from
-   Rust, either directly or indirectly, have this fake "attribute"
-   CALLED_FROM_RUST, which is actually nothing.  Calls from Rust
-   typically execute on threads did not call fd_boot, so they do not
-   have the typical FD_TL variables.  In particular, they cannot use
-   normal metrics, and their log messages don't have full context.
-   Additionally, Rust functions marked CALLED_FROM_RUST cannot call back
-   into a C fd_ext function without causing a deadlock (although the
-   other Rust fd_ext functions have a similar problem).
-
-   To prevent annotation from polluting the whole codebase, calls to
-   functions outside this file are manually checked and marked as being
-   safe at each call rather than annotated. */
-#define CALLED_FROM_RUST
-
-static CALLED_FROM_RUST fd_poh_ctx_t *
-fd_ext_poh_write_lock( void ) {
-  for(;;) {
-    /* Acquire the waiter lock to make sure we are the first writer in the queue. */
-    if( FD_LIKELY( !FD_ATOMIC_CAS( &fd_poh_waiting_lock, 0UL, 1UL) ) ) break;
-    FD_SPIN_PAUSE();
-  }
-  FD_COMPILER_MFENCE();
-  for(;;) {
-    /* Now wait for the tile to tell us we can proceed. */
-    if( FD_LIKELY( FD_VOLATILE_CONST( fd_poh_returned_lock ) ) ) break;
-    FD_SPIN_PAUSE();
-  }
-  FD_COMPILER_MFENCE();
-  return fd_poh_global_ctx;
-}
-
-static CALLED_FROM_RUST void
-fd_ext_poh_write_unlock( void ) {
-  FD_COMPILER_MFENCE();
-  FD_VOLATILE( fd_poh_returned_lock ) = 0UL;
-}
 
 /* The PoH tile needs to interact with the Solana Labs address space to
    do certain operations that Firedancer hasn't reimplemented yet, a.k.a
@@ -411,10 +508,9 @@ fd_ext_poh_write_unlock( void ) {
    not need any locking, since they are called serially from the single
    PoH tile. */
 
-extern CALLED_FROM_RUST void fd_ext_bank_acquire( void const * bank );
-extern CALLED_FROM_RUST void fd_ext_bank_release( void const * bank );
-extern CALLED_FROM_RUST void fd_ext_poh_signal_leader_change( void * sender );
-extern                  void fd_ext_poh_register_tick( void const * bank, uchar const * hash );
+void fd_ext_poh_register_tick( void const * bank, uchar const * hash ) {
+  // TODO send to replay!
+}
 
 /* fd_ext_poh_initialize is called by Solana Labs on startup to
    initialize the PoH tile with some static configuration, and the
@@ -432,13 +528,14 @@ extern                  void fd_ext_poh_register_tick( void const * bank, uchar 
    It can be used with `fd_ext_poh_signal_leader_change` which
    will just issue a nonblocking send on the channel. */
 
-CALLED_FROM_RUST void
-fd_ext_poh_initialize( double        hashcnt_duration_ns, /* See clock comments above, will be 500ns for mainnet-beta. */
-                       ulong         hashcnt_per_tick,    /* See clock comments above, will be 12,500 for mainnet-beta. */
-                       ulong         ticks_per_slot,      /* See clock comments above, will almost always be 64. */
-                       ulong         tick_height,         /* The counter (height) of the tick to start hashing on top of. */
-                       uchar const * last_entry_hash,     /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */
-                       void *        signal_leader_change /* See comment above. */ ) {
+void
+fd_poh_initialize( 
+                   double        hashcnt_duration_ns, /* See clock comments above, will be 500ns for mainnet-beta. */
+                   ulong         hashcnt_per_tick,    /* See clock comments above, will be 12,500 for mainnet-beta. */
+                   ulong         ticks_per_slot,      /* See clock comments above, will almost always be 64. */
+                   ulong         tick_height,         /* The counter (height) of the tick to start hashing on top of. */
+                   uchar const * last_entry_hash,     /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */
+                   void *        signal_leader_change /* See comment above. */ ) {
   FD_COMPILER_MFENCE();
   for(;;) {
     /* Make sure the ctx is initialized before trying to take the lock. */
@@ -447,47 +544,43 @@ fd_ext_poh_initialize( double        hashcnt_duration_ns, /* See clock comments 
   }
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
 
-  fd_poh_tile_initialize( &ctx->poh_tile_ctx, hashcnt_duration_ns, hashcnt_per_tick, ticks_per_slot, tick_height,
-      last_entry_hash );
+  ctx->hashcnt             = tick_height*hashcnt_per_tick;
+  ctx->last_hashcnt        = ctx->hashcnt;
+  ctx->reset_slot_hashcnt  = ctx->hashcnt;
+  ctx->reset_slot_start_ns = fd_log_wallclock(); /* safe to call from Rust */
+
+  memcpy( ctx->hash, last_entry_hash, 32UL );
 
   ctx->signal_leader_change = signal_leader_change;
 
-  fd_ext_poh_write_unlock();
-}
+  /* Store configuration about the clock. */
+  ctx->hashcnt_duration_ns = hashcnt_duration_ns;
+  ctx->hashcnt_per_tick = hashcnt_per_tick;
+  ctx->ticks_per_slot = ticks_per_slot;
 
-/* fd_ext_poh_acquire_bank gets the current leader bank if there is one
-   currently active.  PoH might think we are leader without having a
-   leader bank if the replay stage has not yet noticed we are leader.
+  /* Can be derived from other information, but we precompute it
+     since it is used frequently. */
+  ctx->hashcnt_per_slot = ticks_per_slot*hashcnt_per_tick;
 
-   The bank that is returned is owned the caller, and must be converted
-   to an Arc<Bank> by calling Arc::from_raw() on it.  PoH increments the
-   reference count before returning the bank, so that it can also keep
-   its internal copy.
-
-   If there is no leader bank, NULL is returned.  In this case, the
-   caller should not call `Arc::from_raw()`. */
-
-CALLED_FROM_RUST void const *
-fd_ext_poh_acquire_leader_bank( void ) {
-  fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
-  void const * bank = NULL;
-  if( FD_LIKELY( ctx->current_leader_bank ) ) {
-    /* Clone refcount before we release the lock. */
-    fd_ext_bank_acquire( ctx->current_leader_bank );
-    bank = ctx->current_leader_bank;
+  if( FD_UNLIKELY( ctx->hashcnt_per_tick==1UL ) ) {
+    /* Low power producer, maximum of one microblock per tick in the slot */
+    ctx->max_microblocks_per_slot = ctx->ticks_per_slot;
+  } else {
+    /* See the long comment in after_credit for this limit */
+    ctx->max_microblocks_per_slot = fd_ulong_min( MAX_MICROBLOCKS_PER_SLOT, ctx->ticks_per_slot*(ctx->hashcnt_per_tick-1UL) );
   }
+
   fd_ext_poh_write_unlock();
-  return bank;
 }
 
 /* fd_ext_poh_reset_slot returns the slot height one above the last good
    (unskipped) slot we are building on top of.  This is always a good
    known value, and will not be ULONG_MAX. */
 
-CALLED_FROM_RUST ulong
+ulong
 fd_ext_poh_reset_slot( void ) {
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
-  ulong reset_slot = fd_poh_tile_reset_slot( &ctx->poh_tile_ctx );
+  ulong reset_slot = ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot;
   fd_ext_poh_write_unlock();
   return reset_slot;
 }
@@ -505,21 +598,93 @@ fd_ext_poh_reset_slot( void ) {
    reset_slot is the slot height of the last good (unskipped) slot we
    are building on top of. */
 
-CALLED_FROM_RUST int
+int
 fd_ext_poh_reached_leader_slot( ulong * out_leader_slot,
                                 ulong * out_reset_slot ) {
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
 
-  int has_reached_leader_slot = fd_poh_tile_reached_leader_slot( &ctx->poh_tile_ctx, out_leader_slot, out_reset_slot );
+  ulong slot = ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot;
+  *out_leader_slot = slot;
+  *out_reset_slot = ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot;
+
+  if( FD_UNLIKELY( ctx->next_leader_slot_hashcnt==ULONG_MAX ||
+                   ctx->hashcnt<ctx->next_leader_slot_hashcnt ) ) {
+    /* Didn't reach our leader slot yet. */
+    fd_ext_poh_write_unlock();
+    return 0;
+  }
+
+  if( FD_LIKELY( ctx->reset_slot_hashcnt==ctx->next_leader_slot_hashcnt ) ) {
+    /* We were reset onto our leader slot, because the prior leader
+       completed theirs, so we should start immediately, no need for a
+       grace period. */
+    fd_ext_poh_write_unlock();
+    return 1;
+  }
+
+  if( FD_LIKELY( slot>=1UL ) ) {
+    fd_epoch_leaders_t * leaders = fd_stake_ci_get_lsched_for_slot( ctx->stake_ci, slot-1UL ); /* Safe to call from Rust */
+    if( FD_LIKELY( leaders ) ) {
+      fd_pubkey_t const * leader = fd_epoch_leaders_get( leaders, slot-1UL ); /* Safe to call from Rust */
+      if( FD_LIKELY( leader ) ) {
+        if( FD_UNLIKELY( !memcmp( leader->uc, ctx->identity_key.uc, 32UL ) ) ) {
+          /* We were the leader in the previous slot, so also no need for
+            a grace period.  We wouldn't get here if we were still
+            processing the prior slot so begin new one immediately. */
+          fd_ext_poh_write_unlock();
+          return 1;
+        }
+      }
+    }
+  }
+
+  ulong reset_slot = ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot;
+  if( FD_UNLIKELY( slot-reset_slot>=4UL ) ) {
+    /* The prior leader has not completed any slot successfully during
+       their 4 leader slots, so they are probably inactive and no need
+       to give a grace period. */
+    fd_ext_poh_write_unlock();
+    return 1;
+  }
+
+  if( FD_LIKELY( (ctx->hashcnt-ctx->next_leader_slot_hashcnt) < GRACE_SLOTS * ctx->hashcnt_per_slot ) ) {
+    /*  The prior leader hasn't finished their last slot, and they are
+        likely still publishing, and within their grace period of two
+        slots so we will keep waiting. */
+    fd_ext_poh_write_unlock();
+    return 0;
+  }
 
   fd_ext_poh_write_unlock();
-  return has_reached_leader_slot;
+  return 1;
 }
 
-CALLED_FROM_RUST static void
+static void
 publish_became_leader( fd_poh_ctx_t * ctx,
                        ulong          slot ) {
-  fd_poh_tile_publish_became_leader( &ctx->poh_tile_ctx, ctx->current_leader_bank, slot );
+  double tick_per_ns = fd_tempo_tick_per_ns( NULL );
+  fd_histf_sample( ctx->begin_leader_delay, (ulong)((double)(fd_log_wallclock()-ctx->reset_slot_start_ns)/tick_per_ns) );
+
+  ulong leader_start_hashcnt = slot*ctx->hashcnt_per_slot;
+  long slot_start_ns = ctx->reset_slot_start_ns + (long)((double)(leader_start_hashcnt-ctx->reset_slot_hashcnt)*ctx->hashcnt_duration_ns);
+
+  /* No need to check flow control, there are always credits became when we
+     are leader, we will not "become" leader again until we are done, so at
+     most one frag in flight at a time. */
+
+  uchar * dst = (uchar *)fd_chunk_to_laddr( ctx->pack_out_mem, ctx->pack_out_chunk );
+
+  fd_became_leader_t * leader = (fd_became_leader_t *)dst;
+  leader->slot_start_ns           = slot_start_ns;
+  leader->slot_end_ns             = slot_start_ns + (long)(ctx->hashcnt_duration_ns * (double)ctx->hashcnt_per_slot);
+  leader->bank                    = ctx->current_leader_bank;
+  leader->max_microblocks_in_slot = ctx->max_microblocks_per_slot;
+  leader->ticks_per_slot          = ctx->ticks_per_slot;
+
+  ulong sig = fd_disco_poh_sig( slot, POH_PKT_TYPE_BECAME_LEADER, 0UL );
+  fd_mcache_publish( ctx->pack_out_mcache, ctx->pack_out_depth, ctx->pack_out_seq, sig, ctx->pack_out_chunk, sizeof(fd_became_leader_t), 0UL, 0UL, 0UL );
+  ctx->pack_out_chunk = fd_dcache_compact_next( ctx->pack_out_chunk, sizeof(fd_became_leader_t), ctx->pack_out_chunk0, ctx->pack_out_wmark );
+  ctx->pack_out_seq = fd_seq_inc( ctx->pack_out_seq, 1UL );
 }
 
 /* The PoH tile knows when it should become leader by waiting for its
@@ -528,22 +693,25 @@ publish_became_leader( fd_poh_ctx_t * ctx,
    is by the replay stage.  See the notes in the long comment above for
    more on how this works. */
 
-CALLED_FROM_RUST void
+void
 fd_ext_poh_begin_leader( void const * bank,
                          ulong        slot ) {
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
 
   FD_TEST( !ctx->current_leader_bank );
 
-  fd_poh_tile_begin_leader( &ctx->poh_tile_ctx, slot );
+  ulong current_slot = ctx->hashcnt/ctx->hashcnt_per_slot;
+  if( FD_UNLIKELY( slot!=current_slot ) ) FD_LOG_ERR(( "Trying to begin leader slot %lu but we are now on slot %lu", slot, current_slot ));
 
-  ctx->current_leader_bank = bank;
+  ulong leader_slot = ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot;
+  if( FD_UNLIKELY( slot!=leader_slot ) ) FD_LOG_ERR(( "Trying to begin leader slot %lu but we are now on slot %lu", slot, leader_slot ));
+
+  ctx->current_leader_bank     = bank;
+  ctx->microblocks_lower_bound = 0UL;
 
   /* We need to register ticks on the bank for all of the ticks that
      were skipped. */
-  for( fd_poh_tile_skipped_hashcnt_iter_t iter = fd_poh_tile_skipped_hashcnt_iter_init( &ctx->poh_tile_ctx );
-       !fd_poh_tile_skipped_hashcnt_iter_done( &ctx->poh_tile_ctx, iter );
-       iter = fd_poh_tile_skipped_hashcnt_iter_next( &ctx->poh_tile_ctx, iter ) ) {
+  for( ulong skipped_hashcnt=ctx->reset_slot_hashcnt+ctx->hashcnt_per_tick; skipped_hashcnt<=ctx->next_leader_slot_hashcnt; skipped_hashcnt+=ctx->hashcnt_per_tick ) {
     /* The "hash" value we provide doesn't matter for all but the
        oldest 150 slots, since only the most recent 150 slots are
        saved in the sysvar.  The value provided for those is a
@@ -551,14 +719,14 @@ fd_ext_poh_begin_leader( void const * bank,
        simplicity.  Also the value provided for ticks that are not
        on a slot boundary doesn't matter, since the blockhash will
        be ignored. */
-    if( FD_UNLIKELY( fd_poh_tile_skipped_hashcnt_iter_is_slot_boundary( &ctx->poh_tile_ctx, iter ) ) ) {
-      fd_ext_poh_register_tick( ctx->current_leader_bank, fd_poh_tile_skipped_hashcnt_iter_slot_hash( &ctx->poh_tile_ctx, iter ) );
+    if( FD_UNLIKELY( !(skipped_hashcnt%ctx->hashcnt_per_slot) ) ) {
+      fd_poh_register_tick( ctx->current_leader_bank, ctx->skipped_slot_hashes[ (skipped_hashcnt/ctx->hashcnt_per_slot)%150UL ] );
     } else {
       /* If it's not a slot boundary, the actual blockhash doesn't
          matter -- it won't be used for anything, but we still need
          to register the tick to make the bank tick counter correct. */
       uchar ignored[ 32 ];
-      fd_ext_poh_register_tick( ctx->current_leader_bank, ignored );
+      fd_poh_register_tick( ctx->current_leader_bank, ignored );
     }
   }
 
@@ -571,53 +739,137 @@ fd_ext_poh_begin_leader( void const * bank,
    leader.  Includes the current slot.  If we are not leader in what
    remains of the current and next epoch, return ULONG_MAX. */
 
-static inline CALLED_FROM_RUST ulong
+static inline ulong
 next_leader_slot_hashcnt( fd_poh_ctx_t * ctx ) {
-  return fd_poh_tile_next_leader_slot_hashcnt( &ctx->poh_tile_ctx );
+  ulong current_slot = ctx->hashcnt/ctx->hashcnt_per_slot;
+  /* If we have published anything in a particular slot, then we
+     should never become leader for that slot again.
+
+     last_hashcnt is always recorded after incrementing the
+     hashcnt (after publishing) for the tick or entry, so
+     to get the slot we published in, it is
+
+        (ctx->last_hashcnt-1UL)/ctx->hashcnt_per_slot
+
+     Then we have to add one to get the next slot that we are
+     allowed to publish for. */
+  current_slot = fd_ulong_max( current_slot, 1UL+(ctx->last_hashcnt-1UL)/ctx->hashcnt_per_slot );
+
+  for(;;) {
+    fd_epoch_leaders_t * leaders = fd_stake_ci_get_lsched_for_slot( ctx->stake_ci, current_slot ); /* Safe to call from Rust */
+    if( FD_UNLIKELY( !leaders ) ) break;
+
+    while( current_slot<(leaders->slot0+leaders->slot_cnt) ) {
+      fd_pubkey_t const * leader = fd_epoch_leaders_get( leaders, current_slot ); /* Safe to call from Rust */
+      if( FD_UNLIKELY( !memcmp( leader->key, ctx->identity_key.key, 32UL ) ) ) return current_slot*ctx->hashcnt_per_slot;
+      current_slot++;
+    }
+  }
+
+  return ULONG_MAX;
 }
 
-static CALLED_FROM_RUST void
+static void
 no_longer_leader( fd_poh_ctx_t * ctx ) {
   if( FD_UNLIKELY( ctx->current_leader_bank ) ) fd_ext_bank_release( ctx->current_leader_bank );
+  ctx->expect_sequential_leader_slot = ctx->hashcnt/ctx->hashcnt_per_slot;
   ctx->current_leader_bank = NULL;
+  ctx->next_leader_slot_hashcnt = next_leader_slot_hashcnt( ctx );
 
-  fd_poh_tile_no_longer_leader( &ctx->poh_tile_ctx );
+  double tick_per_ns = fd_tempo_tick_per_ns( NULL );
+  fd_histf_sample( ctx->slot_done_delay, (ulong)((double)(fd_log_wallclock()-ctx->reset_slot_start_ns)/tick_per_ns) );
 
   FD_COMPILER_MFENCE();
   fd_ext_poh_signal_leader_change( ctx->signal_leader_change );
+  FD_LOG_INFO(( "no_longer_leader(next_leader_slot=%lu)", ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot ));
 }
 
 /* fd_ext_poh_reset is called by the Solana Labs client when a slot on
    the active fork has finished a block and we need to reset our PoH to
    be ticking on top of the block it produced. */
 
-CALLED_FROM_RUST void
+void
 fd_ext_poh_reset( ulong         completed_bank_slot, /* The slot that successfully produced a block */
                   uchar const * reset_blockhash      /* The hash of the last tick in the produced block */ ) {
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
 
-  int leader_before_reset = fd_poh_tile_reset( &ctx->poh_tile_ctx, completed_bank_slot, reset_blockhash );
-  
-  /* No longer have a leader bank if we are reset. Replay stage will
-    call back again to give us a new one if we should become leader
-    for the reset slot.
+  int leader_before_reset = ctx->hashcnt>=ctx->next_leader_slot_hashcnt;
 
-    The order is important here, ctx->hashcnt must be updated before
-    calling no_longer_leader. */
+  ulong reset_hashcnt = (completed_bank_slot+1UL)*ctx->hashcnt_per_slot;
+
+   if( FD_UNLIKELY( ctx->current_leader_bank ) ) {
+   /* If we notified the banking stage that we were leader for a slot,
+      it's already sending microblocks which we won't be able to tell
+      which fork of the slot they are for, so we can't become leader
+      again for that slot.  This will cause the in-flight microblocks
+      to be dropped. */
+     ctx->last_hashcnt = (1UL+(ctx->hashcnt/ctx->hashcnt_per_slot))*ctx->hashcnt_per_slot;
+   } else if( FD_LIKELY( ctx->last_hashcnt ) ) {
+     /* Otherwise, we just need to roll the prior last_hashcnt value
+        forward.  We can't become leader in any slot we have ever
+        published in, even if we get reset back in the past due to forks
+        having different clock skews. */
+     ctx->last_hashcnt = fd_ulong_max( reset_hashcnt,
+                                       (1UL+(ctx->last_hashcnt-1UL)/ctx->hashcnt_per_slot)*ctx->hashcnt_per_slot );
+   } else {
+     /* If we don't have a last_hashcnt, then we can freely publish into
+        the slot. */
+     ctx->last_hashcnt = reset_hashcnt;
+   }
+
+  memcpy( ctx->hash, reset_blockhash, 32UL );
+  ctx->hashcnt             = reset_hashcnt;
+  ctx->reset_slot_hashcnt  = ctx->hashcnt;
+
+  if( FD_UNLIKELY( ctx->expect_sequential_leader_slot==ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot ) ) {
+    /* If we are being reset onto a slot, it means some block was fully
+      processed, so we reset to build on top of it.  Typically we want
+      to update the reset_slot_start_ns to the current time, because
+      the network will give the next leader 400ms to publish,
+      regardless of how long the prior leader took.
+
+      But: if we were leader in the prior slot, and the block was our
+      own we can do better.  We know that the next slot should start
+      exactly 400ms after the prior one started, so we can use that as
+      the reset slot start time instead. */
+    ctx->reset_slot_start_ns += (long)(ctx->hashcnt_duration_ns*(double)ctx->hashcnt_per_slot);
+  } else {
+    ctx->reset_slot_start_ns = fd_log_wallclock(); /* safe to call from Rust */
+  }
+  ctx->expect_sequential_leader_slot = ULONG_MAX;
+
   if( FD_UNLIKELY( leader_before_reset ) ) {
+    /* No longer have a leader bank if we are reset. Replay stage will
+       call back again to give us a new one if we should become leader
+       for the reset slot.
+
+       The order is important here, ctx->hashcnt must be updated before
+       calling no_longer_leader. */
     no_longer_leader( ctx );
   }
+  ctx->next_leader_slot_hashcnt = next_leader_slot_hashcnt( ctx );
+  FD_LOG_INFO(( "fd_ext_poh_reset(slot=%lu,next_leader_slot=%lu)", ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot, ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot ));
 
   fd_ext_poh_write_unlock();
 }
 
 /* Since it can't easily return an Option<Pubkey>, return 1 for Some and
    0 for None. */
-CALLED_FROM_RUST int
+int
 fd_ext_poh_get_leader_after_n_slots( ulong n,
                                      uchar out_pubkey[ static 32 ] ) {
   fd_poh_ctx_t * ctx = fd_ext_poh_write_lock();
-  int copied = fd_poh_tile_get_leader_after_n_slots( &ctx->poh_tile_ctx, n, out_pubkey );
+  ulong slot = (ctx->hashcnt/ctx->hashcnt_per_slot) + n;
+  fd_epoch_leaders_t * leaders = fd_stake_ci_get_lsched_for_slot( ctx->stake_ci, slot ); /* Safe to call from Rust */
+
+  int copied = 0;
+  if( FD_LIKELY( leaders ) ) {
+    fd_pubkey_t const * leader = fd_epoch_leaders_get( leaders, slot ); /* Safe to call from Rust */
+    if( FD_LIKELY( leader ) ) {
+      memcpy( out_pubkey, leader, 32UL );
+      copied = 1;
+    }
+  }
   fd_ext_poh_write_unlock();
   return copied;
 }
@@ -642,37 +894,269 @@ mux_ctx( void * scratch ) {
   return (void*)fd_ulong_align_up( (ulong)scratch, alignof( fd_poh_ctx_t ) );
 }
 
+static void
+publish_tick( fd_poh_ctx_t *     ctx,
+              fd_mux_context_t * mux ) {
+  /* We must subtract 1 from hashcnt here, since we might have ticked
+     over into the next slot already. */
+  ulong slot = (ctx->hashcnt-1UL)/ctx->hashcnt_per_slot;
+
+  uchar * dst = (uchar *)fd_chunk_to_laddr( ctx->shred_out_mem, ctx->shred_out_chunk );
+
+  fd_entry_batch_meta_t * meta = (fd_entry_batch_meta_t *)dst;
+  meta->parent_offset = 1UL + slot - (ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot);
+  ulong slot_hashcnt = slot*ctx->hashcnt_per_slot;
+  meta->reference_tick = (ctx->hashcnt-slot_hashcnt)/ctx->hashcnt_per_tick;
+
+  meta->block_complete = !(ctx->hashcnt % ctx->hashcnt_per_slot);
+
+  ulong hash_delta = ctx->hashcnt - ctx->last_hashcnt;
+  ctx->last_hashcnt = ctx->hashcnt;
+
+  dst += sizeof(fd_entry_batch_meta_t);
+  fd_entry_batch_header_t * tick = (fd_entry_batch_header_t *)dst;
+  tick->hashcnt_delta = hash_delta;
+  fd_memcpy( tick->hash, ctx->hash, 32UL );
+  tick->txn_cnt = 0UL;
+
+  ulong tspub = (ulong)fd_frag_meta_ts_comp( fd_tickcount() );
+  ulong sz = sizeof(fd_entry_batch_meta_t)+sizeof(fd_entry_batch_header_t);
+  ulong sig = fd_disco_poh_sig( slot, POH_PKT_TYPE_MICROBLOCK, 0UL );
+  fd_mux_publish( mux, sig, ctx->shred_out_chunk, sz, 0UL, 0UL, tspub );
+  ctx->shred_out_chunk = fd_dcache_compact_next( ctx->shred_out_chunk, sz, ctx->shred_out_chunk0, ctx->shred_out_wmark );
+}
+
 static inline void
 after_credit( void *             _ctx,
               fd_mux_context_t * mux ) {
   fd_poh_ctx_t * ctx = (fd_poh_ctx_t *)_ctx;
 
-  int is_leader       = fd_poh_tile_is_leader( &ctx->poh_tile_ctx );
-  int hashes_produced = fd_poh_tile_do_hashing( &ctx->poh_tile_ctx, is_leader );
-  
-  if( !hashes_produced ) {
-    /* No hashes were produced, nothing to do. */
+  int is_leader = ctx->next_leader_slot_hashcnt!=ULONG_MAX && ctx->hashcnt>=ctx->next_leader_slot_hashcnt;
+  if( FD_UNLIKELY( is_leader && !ctx->current_leader_bank ) ) {
+    /* If we are the leader, but we didn't yet learn what the leader
+       bank object is from the replay stage, do not do any hashing.
+
+       This is not ideal, but greatly simplifies the control flow. */
     return;
   }
 
-  if( FD_UNLIKELY( fd_poh_tile_has_become_leader( &ctx->poh_tile_ctx, is_leader ) ) ) {
+  int low_power_mode = ctx->hashcnt_per_tick==1UL;
+
+
+  /* If we are the leader, always leave enough capacity in the slot so
+     that we can mixin any potential microblocks still coming from the
+     pack tile for this slot. */
+  ulong current_slot = ctx->hashcnt/ctx->hashcnt_per_slot;
+  ulong max_remaining_microblocks = ctx->max_microblocks_per_slot - ctx->microblocks_lower_bound;
+  /* With hashcnt_per_tick hashes per tick, we actually get
+     hashcnt_per_tick-1 chances to mixin a microblock.  For each tick
+     span that we need to reserve, we also need to reserve the hashcnt
+     for the tick, hence the +
+     max_remaining_microblocks/(hashcnt_per_tick-1) rounded up.
+
+     However, if hashcnt_per_tick is 1 because we're in low power mode,
+     this should probably just be max_remaining_microblocks. */
+  ulong max_remaining_ticks_or_microblocks = max_remaining_microblocks;
+  if( FD_LIKELY( !low_power_mode ) ) max_remaining_ticks_or_microblocks += (max_remaining_microblocks+ctx->hashcnt_per_tick-2UL)/(ctx->hashcnt_per_tick-1UL);
+
+  ulong restricted_hashcnt;
+  if( FD_LIKELY( is_leader ) ) restricted_hashcnt = fd_ulong_if( (current_slot+1UL)*ctx->hashcnt_per_slot>=max_remaining_ticks_or_microblocks, (current_slot+1UL)*ctx->hashcnt_per_slot-max_remaining_ticks_or_microblocks, 0UL );
+  else                         restricted_hashcnt = fd_ulong_if( (current_slot+2UL)*ctx->hashcnt_per_slot>=max_remaining_ticks_or_microblocks, (current_slot+2UL)*ctx->hashcnt_per_slot-max_remaining_ticks_or_microblocks, 0UL );
+
+  ulong min_hashcnt = ctx->hashcnt;
+
+  if( FD_LIKELY( !low_power_mode ) ) {
+    /* Recall that there are two kinds of events that will get published
+       to the shredder,
+
+         (a) Ticks. These occur every 12,500 (hashcnt_per_tick) hashcnts,
+             and there will be 64 (ticks_per_slot) of them in each slot.
+
+             Ticks must not have any transactions mixed into the hash.
+             This is not strictly needed in theory, but is required by the
+             current consensus protocol.  They get published here in
+             after_credit.
+
+         (b) Microblocks.  These can occur at any other hashcnt, as long
+             as it is not a tick.  Microblocks cannot be empty, and must
+             have at least one transactions mixed in.  These get
+             published in after_frag.
+
+       If hashcnt_per_tick is 1, then we are in low power mode and the
+       following does not apply, since we can mix in transactions at any
+       time.
+
+       In the normal, non-low-power mode, though, we have to be careful
+       to make sure that we do not publish microblocks on tick
+       boundaries.  To do that, we need to obey two rules:
+         (i)  after_credit must not leave hashcnt one before a tick
+              boundary
+         (ii) if after_credit begins one before a tick boundary, it must
+              advance hashcnt and publish the tick
+
+       There's some interplay between min_hashcnt and restricted_hashcnt
+       here, and we need to show that there's always a value of
+       target_hashcnt we can pick such that
+           min_hashcnt <= target_hashcnt <= restricted_hashcnt.
+       We'll prove this by induction for current_slot==0 and
+       is_leader==true, since all other slots should be the same.
+
+       Let m_j and r_j be the min_hashcnt and restricted_hashcnt
+       (respectively) for the jth call to after_credit in a slot.  We
+       want to show that for all values of j, it's possible to pick a
+       value h_j, the value of target_hashcnt for the jth call to
+       after_credit (which is also the value of hashcnt after
+       after_credit has completed) such that m_j<=h_j<=r_j.
+
+       Additionally, let T be hashcnt_per_tick and N be ticks_per_slot.
+
+       Starting with the base case, j==0.  m_j=0, and
+         r_0 = N*T - max_microblocks_per_slot
+                   - ceil(max_microblocks_per_slot/(T-1)).
+
+       This is monotonic decreasing in max_microblocks_per_slot, so it
+       achieves its minimum when max_microblocks_per_slot is its
+       maximum.
+           r_0 >= N*T - N*(T-1) - ceil( (N*(T-1))/(T-1))
+                = N*T - N*(T-1)-N = 0.
+       Thus, m_0 <= r_0, as desired.
+
+
+
+       Then, for the inductive step, assume there exists h_j such that
+       m_j<=h_j<=r_j, and we want to show that there exists h_{j+1},
+       which is the same as showing m_{j+1}<=r_{j+1}.
+
+       Let a_j be 1 if we had a microblock immediately following the jth
+       call to after_credit, and 0 otherwise.  Then hashcnt at the start
+       of the (j+1)th call to after_frag is h_j+a_j.
+       Also, set b_{j+1}=1 if we are in the case covered by rule (ii)
+       above during the (j+1)th call to after_credit, i.e. if
+       (h_j+a_j)%T==T-1.  Thus, m_{j+1} = h_j + a_j + b_{j+1}.
+
+       If we received an additional microblock, then
+       max_remaining_microblocks goes down by 1, and
+       max_remaining_ticks_or_microblocks goes down by either 1 or 2,
+       which means restricted_hashcnt goes up by either 1 or 2.  In
+       particular, it goes up by 2 if the new value of
+       max_remaining_microblocks (at the start of the (j+1)th call to
+       after_credit) is congruent to 0 mod T-1.  Let b'_{j+1} be 1 if
+       this condition is met and 0 otherwise.  If we receive a
+       done_packing message, restricted_hashcnt can go up by more, but
+       we can ignore that case, since it is less restrictive.
+       Thus, r_{j+1}=r_j+a_j+b'_{j+1}.
+
+       If h_j < r_j (strictly less), then h_j+a_j < r_j+a_j.  And thus,
+       since b_{j+1}<=b'_{j+1}+1, just by virtue of them both being
+       binary,
+             h_j + a_j + b_{j+1} <  r_j + a_j + b'_{j+1} + 1,
+       which is the same (for integers) as
+             h_j + a_j + b_{j+1} <= r_j + a_j + b'_{j+1},
+                 m_{j+1}         <= r_{j+1}
+
+       On the other hand, if h_j==r_j, this is easy unless b_{j+1}==1,
+       which can also only happen if a_j==1.  Then (h_j+a_j)%T==T-1,
+       which means there's an integer k such that
+
+             h_j+a_j==(ticks_per_slot-k)*T-1
+             h_j    ==ticks_per_slot*T -  k*(T-1)-1  - k-1
+                    ==ticks_per_slot*T - (k*(T-1)+1) - ceil( (k*(T-1)+1)/(T-1) )
+
+       Since h_j==r_j in this case, and
+       r_j==(ticks_per_slot*T) - max_remaining_microblocks_j - ceil(max_remaining_microblocks_j/(T-1)),
+       we can see that the value of max_remaining_microblocks at the
+       start of the jth call to after_credit is k*(T-1)+1.  Again, since
+       a_j==1, then the value of max_remaining_microblocks at the start
+       of the j+1th call to after_credit decreases by 1 to k*(T-1),
+       which means b'_{j+1}=1.
+
+       Thus, h_j + a_j + b_{j+1} == r_j + a_j + b'_{j+1}, so, in
+       particular, h_{j+1}<=r_{j+1} as desired. */
+     min_hashcnt += (ulong)(min_hashcnt%ctx->hashcnt_per_tick == (ctx->hashcnt_per_tick-1UL)); /* add b_{j+1}, enforcing rule (ii) */
+  }
+  /* Now figure out how many hashes are needed to "catch up" the hash
+     count to the current system clock, and clamp it to the allowed
+     range. */
+  long now = fd_log_wallclock();
+  ulong target_hashcnt = ctx->reset_slot_hashcnt + (ulong)((double)(now - ctx->reset_slot_start_ns) / ctx->hashcnt_duration_ns);
+  /* Clamp to [min_hashcnt, restricted_hashcnt] as above */
+  target_hashcnt = fd_ulong_max( fd_ulong_min( target_hashcnt, restricted_hashcnt ), min_hashcnt );
+
+  /* The above proof showed that it was always possible to pick a value
+     of target_hashcnt, but we still have a lot of freedom in how to
+     pick it.  It simplifies the code a lot if we don't keep going after
+     a tick in this function.  In particular, we want to publish at most
+     1 tick in this call, since otherwise we could consume infinite
+     credits to publish here.  The credits are set so that we should
+     only ever publish one tick during this loop.  Also, all the extra
+     stuff (leader transitions, publishing ticks, etc.) we have to do
+     happens at tick boundaries, so this lets us consolidate all those
+     cases.
+
+     Mathematically, since the current value of hashcnt is h_j+a_j, the
+     next tick (advancing a full tick if we're currently at a tick) is
+     t_{j+1} = T*(floor( (h_j+a_j)/T )+1).  We need to show that if we set
+     h'_{j+1} = min( h_{j+1}, t_{j+1} ), it is still valid.
+
+     First, h'_{j+1} <= h_{j+1} <= r_{j+1}, so we're okay in that
+     direction.
+
+     Next, observe that t_{j+1}>=h_j + a_j + 1, and recall that b_{j+1}
+     is 0 or 1. So then,
+                    t_{j+1} >= h_j+a_j+b_{j+1} = m_{j+1}.
+
+     We know h_{j+1) >= m_{j+1} from before, so then h'_{j+1} >=
+     m_{j+1}, as desired. */
+
+  if( FD_LIKELY( !low_power_mode ) ) {
+    ulong next_tick_hashcnt = ctx->hashcnt_per_tick * (1UL+(ctx->hashcnt/ctx->hashcnt_per_tick));
+    target_hashcnt = fd_ulong_min( target_hashcnt, next_tick_hashcnt );
+  }
+
+  /* We still need to enforce rule (i). We know that min_hashcnt%T !=
+     T-1 because of rule (ii).  That means that if target_hashcnt%T ==
+     T-1 at this point, target_hashcnt > min_hashcnt (notice the
+     strict), so target_hashcnt-1 >= min_hashcnt and is thus still a
+     valid choice for target_hashcnt. */
+  target_hashcnt -= (ulong)( (!low_power_mode) & ((target_hashcnt%ctx->hashcnt_per_tick)==(ctx->hashcnt_per_tick-1UL)) );
+
+  FD_TEST( target_hashcnt >= ctx->hashcnt       );
+  FD_TEST( target_hashcnt >= min_hashcnt        );
+  FD_TEST( target_hashcnt <= restricted_hashcnt );
+
+  if( FD_UNLIKELY( ctx->hashcnt==target_hashcnt ) ) return; /* Nothing to do, don't publish a tick twice */
+
+  while( ctx->hashcnt<target_hashcnt ) {
+    fd_sha256_hash( ctx->hash, 32UL, ctx->hash );
+    ctx->hashcnt++;
+  }
+
+  if( FD_UNLIKELY( !is_leader && ctx->hashcnt>=ctx->next_leader_slot_hashcnt ) ) {
     /* We were not leader but beame leader... we don't want to do any
        other hashing until we get the leader bank from the replay
        stage. */
     return;
   }
 
-  if( FD_UNLIKELY( fd_poh_tile_has_ticked_while_leader( &ctx->poh_tile_ctx, is_leader ) ) ) {
+  if( FD_UNLIKELY( is_leader && !(ctx->hashcnt%ctx->hashcnt_per_tick) ) ) {
     /* We ticked while leader... tell the leader bank. */
-    fd_ext_poh_register_tick( ctx->current_leader_bank, ctx->poh_tile_ctx.hash );
+    fd_ext_poh_register_tick( ctx->current_leader_bank, ctx->hash );
 
     /* And send an empty microblock (a tick) to the shred tile. */
-    fd_poh_tile_publish_tick( &ctx->poh_tile_ctx, mux );
+    publish_tick( ctx, mux );
   }
 
-  fd_poh_tile_process_skipped_slot( &ctx->poh_tile_ctx, is_leader );
+  if( FD_UNLIKELY( !is_leader && !(ctx->hashcnt%ctx->hashcnt_per_slot) ) ) {
+    /* We finished a slot while not leader... save the current hash so
+       it can be played back into the bank (to update the recent slot
+       hashes sysvar) when we become the leader. */
+    fd_memcpy( ctx->skipped_slot_hashes[ (ctx->hashcnt/ctx->hashcnt_per_slot)%150UL ], ctx->hash, 32UL );
+  }
 
-  if( FD_UNLIKELY( fd_poh_tile_is_no_longer_leader( &ctx->poh_tile_ctx, is_leader ) ) ) {
+  if( FD_UNLIKELY( is_leader && ctx->hashcnt>=(ctx->next_leader_slot_hashcnt+ctx->hashcnt_per_slot) ) ) {
+    /* We ticked while leader and are no longer leader... transition
+       the state machine. */
+    FD_TEST( !max_remaining_microblocks );
     no_longer_leader( ctx );
   }
 }
@@ -694,7 +1178,9 @@ during_housekeeping( void * _ctx ) {
   }
   FD_COMPILER_MFENCE();
 
-  fd_poh_tile_during_housekeeping( &ctx->poh_tile_ctx );
+  FD_MHIST_COPY( POH_TILE, BEGIN_LEADER_DELAY_SECONDS,     ctx->begin_leader_delay );
+  FD_MHIST_COPY( POH_TILE, FIRST_MICROBLOCK_DELAY_SECONDS, ctx->first_microblock_delay );
+  FD_MHIST_COPY( POH_TILE, SLOT_DONE_DELAY_SECONDS,        ctx->slot_done_delay );
 }
 
 static void
@@ -703,10 +1189,32 @@ before_frag( void * _ctx,
              ulong  seq,
              ulong  sig,
              int *  opt_filter ) {
+  (void)in_idx;
   (void)seq;
 
   fd_poh_ctx_t * ctx = (fd_poh_ctx_t *)_ctx;
-  fd_poh_tile_before_frag( &ctx->poh_tile_ctx, in_idx, sig, opt_filter );
+  if( FD_UNLIKELY( in_idx==ctx->pack_in_idx ) ) {
+    if( FD_LIKELY( fd_disco_poh_sig_pkt_type( sig )==POH_PKT_TYPE_DONE_PACKING ||
+                   fd_disco_poh_sig_pkt_type( sig )==POH_PKT_TYPE_MICROBLOCK ) ) {
+      ulong slot = fd_disco_poh_sig_slot( sig );
+
+      /* The following sequence is possible...
+      
+          1. We become leader in slot 10
+          2. While leader, we switch to a fork that is on slot 8, where we are leader
+          3. We get the in-flight microblocks for slot 10
+
+        These in-flight microblocks need to be dropped, so we check
+        against the hashcnt high water mark (last_hashcnt) rather than the current
+        hashcnt here when determining what to drop.
+
+        We know if the slot is lower than the high water mark it's from a stale
+        leader slot, because we will not become leader for the same slot twice
+        even if we are reset back in time (to prevent duplicate blocks). */
+      if( FD_UNLIKELY( slot<ctx->last_hashcnt/ctx->hashcnt_per_slot ) ) *opt_filter = 1;
+      return;
+    }
+  }
 }
 
 static inline void
@@ -754,6 +1262,48 @@ during_frag( void * _ctx,
     fd_memcpy( ctx->_txns, src, sz-sizeof(fd_microblock_trailer_t) );
     ctx->_microblock_trailer = (fd_microblock_trailer_t*)(src+sz-sizeof(fd_microblock_trailer_t));
   }
+}
+
+static void
+publish_microblock( fd_poh_ctx_t *     ctx,
+                    fd_mux_context_t * mux,
+                    ulong              sig,
+                    ulong              slot,
+                    ulong              hashcnt_delta,
+                    ulong              txn_cnt ) {
+  uchar * dst = (uchar *)fd_chunk_to_laddr( ctx->shred_out_mem, ctx->shred_out_chunk );
+  fd_entry_batch_meta_t * meta = (fd_entry_batch_meta_t *)dst;
+  meta->parent_offset = 1UL + slot - (ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot);
+  meta->reference_tick = (ctx->hashcnt/ctx->hashcnt_per_tick) % ctx->ticks_per_slot;
+  meta->block_complete = !(ctx->hashcnt % ctx->hashcnt_per_slot);
+
+  dst += sizeof(fd_entry_batch_meta_t);
+  fd_entry_batch_header_t * header = (fd_entry_batch_header_t *)dst;
+  header->hashcnt_delta = hashcnt_delta;
+  fd_memcpy( header->hash, ctx->hash, 32UL );
+
+  dst += sizeof(fd_entry_batch_header_t);
+  ulong payload_sz = 0UL;
+  ulong included_txn_cnt = 0UL;
+  for( ulong i=0UL; i<txn_cnt; i++ ) {
+    fd_txn_p_t * txn = (fd_txn_p_t *)(ctx->_txns + i*sizeof(fd_txn_p_t));
+    if( FD_UNLIKELY( !(txn->flags & FD_TXN_P_FLAGS_EXECUTE_SUCCESS) ) ) continue;
+
+    fd_memcpy( dst, txn->payload, txn->payload_sz );
+    payload_sz += txn->payload_sz;
+    dst        += txn->payload_sz;
+    included_txn_cnt++;
+  }
+  header->txn_cnt = included_txn_cnt;
+
+  /* We always have credits to publish here, because we have a burst
+     value of 3 credits, and at most we will publish_tick() once and
+     then publish_became_leader() once, leaving one credit here to
+     publish the microblock. */
+  ulong tspub = (ulong)fd_frag_meta_ts_comp( fd_tickcount() );
+  ulong sz = sizeof(fd_entry_batch_meta_t)+sizeof(fd_entry_batch_header_t)+payload_sz;
+  fd_mux_publish( mux, sig, ctx->shred_out_chunk, sz, 0UL, 0UL, tspub );
+  ctx->shred_out_chunk = fd_dcache_compact_next( ctx->shred_out_chunk, sz, ctx->shred_out_chunk0, ctx->shred_out_wmark );
 }
 
 static inline void

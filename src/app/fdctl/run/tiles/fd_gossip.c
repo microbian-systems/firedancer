@@ -2,7 +2,7 @@
 
 #define _GNU_SOURCE 
 
-#include "tiles.h"
+#include "../../../../disco/tiles.h"
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -217,7 +217,7 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
     uchar * vote_txn_msg = fd_chunk_to_laddr( ctx->pack_out_mem, ctx->pack_out_chunk );
     ulong vote_txn_sz    = gossip_vote->txn.raw_sz;
     memcpy( vote_txn_msg, gossip_vote->txn.raw, vote_txn_sz );
-    ulong sig = 1UL;
+    ulong sig = 1UL; 
     fd_mcache_publish( ctx->pack_out_mcache, ctx->pack_out_depth, ctx->pack_out_seq, sig, ctx->pack_out_chunk,
       vote_txn_sz, 0UL, 0, 0 );
     ctx->pack_out_seq   = fd_seq_inc( ctx->pack_out_seq, 1UL );

@@ -2,9 +2,9 @@
 #define HEADER_fd_src_app_fdctl_run_h
 
 #include "../fdctl.h"
-#include "tiles/tiles.h"
 #include "topos/topos.h"
 
+#include "../../../disco/tiles.h"
 #include "../../../waltz/xdp/fd_xsk.h"
 
 void

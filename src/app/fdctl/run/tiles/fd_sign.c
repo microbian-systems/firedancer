@@ -1,8 +1,7 @@
 #define _GNU_SOURCE
-#include "tiles.h"
-
 #include "generated/sign_seccomp.h"
 
+#include "../../../../disco/tiles.h"
 #include "../../../../disco/keyguard/fd_keyguard.h"
 #include "../../../../disco/keyguard/fd_keyload.h"
 

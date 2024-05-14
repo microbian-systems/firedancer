@@ -1,5 +1,5 @@
-#include "../../fdctl/run/tiles/tiles.h"
-
+#include "../../../disco/tiles.h"
+#include "../../../disco/topo/fd_topo.h"
 #include "../rpc_client/fd_rpc_client.h"
 #include "../rpc_client/fd_rpc_client_private.h"
 

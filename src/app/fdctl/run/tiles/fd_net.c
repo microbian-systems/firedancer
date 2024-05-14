@@ -1,12 +1,12 @@
-#include "tiles.h"
-
 #include <sys/socket.h> /* MSG_DONTWAIT needed before importing the net seccomp filter */
+#include "../../../../disco/tiles.h"
 #include "generated/net_seccomp.h"
 #include "../../../../waltz/quic/fd_quic.h"
 #include "../../../../waltz/xdp/fd_xdp.h"
 #include "../../../../waltz/xdp/fd_xsk_private.h"
 #include "../../../../util/net/fd_ip4.h"
 #include "../../../../waltz/ip/fd_ip.h"
+#include "../../../../disco/topo/fd_topo.h"
 
 #include <linux/unistd.h>
 

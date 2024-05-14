@@ -623,7 +623,7 @@ fd_alloc_malloc_at_least( fd_alloc_t * join,
      want to exit silently if the sz passed in is 0. The alignment must be
      at least 8. */
   ulong fd_alloc_hdr_footprint = fd_ulong_align_up( sizeof(fd_alloc_hdr_t), FD_ASAN_ALIGN );
-  if( sz && sz < ULONG_MAX ) {
+  if( FD_LIKELY(sz && sz < ULONG_MAX) ) {
     sz = fd_ulong_align_up( sz, FD_ASAN_ALIGN );
   }
   align = fd_ulong_if( align < FD_ASAN_ALIGN, FD_ASAN_ALIGN, align );

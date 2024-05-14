@@ -899,7 +899,7 @@ fd_sbpf_r_bpf_64_32( fd_sbpf_loader_t   const * loader,
   fd_elf64_shdr const * shdrs   = (fd_elf64_shdr const *)( elf->bin + elf->ehdr.e_shoff );
   fd_elf64_sym  const * dynsyms = (fd_elf64_sym const *)( elf->bin + loader->dynsym_off );
   fd_elf64_sym  const * sym     = &dynsyms[ r_sym ];
-  ulong S = sym->st_value; // symbol location
+  ulong S = sym->st_value;
 
   /* Verify .dynstr (TODO can we lift this out of the reloc handler?) */
   REQUIRE( info->shndx_dynstr > 0 );
@@ -927,7 +927,7 @@ fd_sbpf_r_bpf_64_32( fd_sbpf_loader_t   const * loader,
        behavior according to protocol rules. */
 
     /* Register function call */
-    ulong target_pc = (S-sh_addr) / 8UL; // offset in terms of 64-bit instructions
+    ulong target_pc = (S-sh_addr) / 8UL;
 
     /* TODO bounds check the target? */
 

@@ -123,6 +123,7 @@ message ELFLoaderCtx {
 }
 
 // Captures the results of a elf binary load.
+// Structurally similar to fd_sbpf_program_t
 message ELFLoaderEffects {
     // loaded program rodata
     bytes rodata = 1

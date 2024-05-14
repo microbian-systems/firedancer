@@ -186,7 +186,7 @@ fd_sbpf_program_new( void *                     prog_mem,
    https://github.com/solana-labs/rbpf/blob/v0.3.0/src/vm.rs#L198 
 
    Solana/Agave equivalent:
-   https://github.com/solana-labs/rbpf/blob/main/src/elf.rs#L361
+   https://github.com/solana-labs/rbpf/blob/v0.8.0/src/elf.rs#L361
    */
 
 int

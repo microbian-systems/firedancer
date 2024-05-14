@@ -71,6 +71,13 @@ fd_exec_instr_test_run( fd_exec_instr_test_runner_t *        runner,
                         void *                               output_buf,
                         ulong                                output_bufsz );
 
+/* Loads an ELF binary (in input->elf.data()). 
+   output_buf points to a memory region of output_bufsz bytes where the
+   result is allocated into. Upon a successful load, the contents of
+   fd_sbpf_program_t are wrapped in *output (backed by output_buf)
+   and returns number of bytes allocated at output_buf. 
+   Any failure to load the ELF binary results in a 0UL return value.
+   */
 ulong
 fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
                                fd_exec_test_elf_loader_effects_t ** output,

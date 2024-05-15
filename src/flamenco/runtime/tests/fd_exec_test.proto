@@ -129,9 +129,7 @@ message ELFLoaderEffects {
     bytes rodata = 1
         [(nanopb).type = FT_POINTER];
     uint64 rodata_sz = 2;
-
-    bytes text = 3
-        [(nanopb).type = FT_POINTER];
+    
     uint64 text_cnt = 4;
     uint64 text_off = 5;
 

@@ -113,25 +113,11 @@ struct fd_poh_tile_ctx {
      not leader. */
   ulong current_leader_slot;
 
-  ulong bank_cnt;
-
   fd_sha256_t * sha256;
 
-  ulong stake_in_idx;
   fd_stake_ci_t * stake_ci;
 
-  ulong pack_in_idx;
-
   fd_pubkey_t identity_key;
-
-  /* These are temporarily set in during_frag so they can be used in
-     after_frag once the frag has been validated as not overrun. */
-  uchar _txns[ USHORT_MAX ];
-  fd_microblock_trailer_t * _microblock_trailer;
-
-  fd_poh_tile_in_ctx_t bank_in[ 32 ];
-  fd_poh_tile_in_ctx_t stake_in;
-  fd_poh_tile_in_ctx_t pack_in;
 
   fd_wksp_t * shred_out_mem;
   ulong       shred_out_chunk0;
@@ -156,6 +142,12 @@ typedef ulong fd_poh_tile_skipped_hashcnt_iter_t;
 
 FD_PROTOTYPES_BEGIN
 
+ulong
+fd_poh_tile_align( void );
+
+ulong
+fd_poh_tile_footprint( void );
+
 void
 fd_poh_tile_publish_tick( fd_poh_tile_ctx_t * ctx,
                           fd_mux_context_t *  mux );
@@ -166,6 +158,7 @@ fd_poh_tile_publish_microblock( fd_poh_tile_ctx_t * ctx,
                                 ulong               sig,
                                 ulong               slot,
                                 ulong               hashcnt_delta,
+                                fd_txn_p_t *        txns,
                                 ulong               txn_cnt );
                               
 void
@@ -209,21 +202,6 @@ void
 fd_poh_tile_during_housekeeping( fd_poh_tile_ctx_t * ctx );
 
 void
-fd_poh_tile_before_frag( fd_poh_tile_ctx_t * ctx,
-                         ulong               in_idx,
-                         ulong               sig,
-                         int *               opt_filter );
-
-void
-fd_poh_tile_during_frag( void * _ctx,
-                         ulong  in_idx,
-                         ulong  seq,
-                         ulong  sig,
-                         ulong  chunk,
-                         ulong  sz,
-                         int *  opt_filter );
-
-int
 fd_poh_tile_begin_leader( fd_poh_tile_ctx_t * ctx,
                           ulong               slot );
 
@@ -263,6 +241,33 @@ fd_poh_tile_skipped_hashcnt_iter_is_slot_boundary( fd_poh_tile_ctx_t * ctx, fd_p
 
 uchar const *
 fd_poh_tile_skipped_hashcnt_iter_slot_hash( fd_poh_tile_ctx_t * ctx, fd_poh_tile_skipped_hashcnt_iter_t iter );
+
+void
+fd_poh_tile_unprivileged_init( fd_topo_t *      topo,
+                               fd_topo_tile_t * tile,
+                               void *           scratch );
+
+ulong
+fd_poh_tile_get_slot( fd_poh_tile_ctx_t * ctx );
+
+ulong
+fd_poh_tile_get_next_leader_slot( fd_poh_tile_ctx_t * ctx );
+
+ulong
+fd_poh_tile_get_last_slot( fd_poh_tile_ctx_t * ctx );
+
+void
+fd_poh_tile_stake_update( fd_poh_tile_ctx_t * ctx );
+
+ulong
+fd_poh_tile_mixin( fd_poh_tile_ctx_t * ctx,
+                   uchar               hash[ static 32 ] );
+
+int
+fd_poh_tile_is_at_tick_boundary( fd_poh_tile_ctx_t * ctx );
+
+int
+fd_poh_tile_is_no_longer_leader_simple( fd_poh_tile_ctx_t * ctx );
 
 FD_PROTOTYPES_END
 

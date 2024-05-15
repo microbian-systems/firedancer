@@ -1,5 +1,5 @@
+#include "../../../../disco/tiles.h"      
 #include "generated/shred_seccomp.h"
-#include "../../../../disco/tiles.h"
 #include "../../../../disco/shred/fd_shredder.h"
 #include "../../../../disco/shred/fd_shred_dest.h"
 #include "../../../../disco/shred/fd_fec_resolver.h"

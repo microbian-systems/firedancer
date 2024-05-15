@@ -1,5 +1,18 @@
 #include "fd_poh_tile.h"
 
+ulong
+fd_poh_tile_align( void ) {
+  return 128UL;
+}
+
+ulong
+fd_poh_tile_footprint( void ) {
+  ulong l = FD_LAYOUT_INIT;
+  l = FD_LAYOUT_APPEND( l, alignof( fd_poh_tile_ctx_t ), sizeof( fd_poh_tile_ctx_t ) );
+  l = FD_LAYOUT_APPEND( l, fd_stake_ci_align(), fd_stake_ci_footprint() );
+  l = FD_LAYOUT_APPEND( l, FD_SHA256_ALIGN, FD_SHA256_FOOTPRINT );
+  return FD_LAYOUT_FINI( l, fd_poh_tile_align() );
+}
 
 void
 fd_poh_tile_publish_tick( fd_poh_tile_ctx_t * ctx,
@@ -39,6 +52,7 @@ fd_poh_tile_publish_microblock( fd_poh_tile_ctx_t * ctx,
                                 ulong               sig,
                                 ulong               slot,
                                 ulong               hashcnt_delta,
+                                fd_txn_p_t *        txns,
                                 ulong               txn_cnt ) {
   uchar * dst = (uchar *)fd_chunk_to_laddr( ctx->shred_out_mem, ctx->shred_out_chunk );
   fd_entry_batch_meta_t * meta = (fd_entry_batch_meta_t *)dst;
@@ -55,7 +69,7 @@ fd_poh_tile_publish_microblock( fd_poh_tile_ctx_t * ctx,
   ulong payload_sz = 0UL;
   ulong included_txn_cnt = 0UL;
   for( ulong i=0UL; i<txn_cnt; i++ ) {
-    fd_txn_p_t * txn = (fd_txn_p_t *)(ctx->_txns + i*sizeof(fd_txn_p_t));
+    fd_txn_p_t * txn = (fd_txn_p_t *)(txns + i*sizeof(fd_txn_p_t));
     if( FD_UNLIKELY( !(txn->flags & FD_TXN_P_FLAGS_EXECUTE_SUCCESS) ) ) continue;
 
     fd_memcpy( dst, txn->payload, txn->payload_sz );
@@ -209,6 +223,11 @@ fd_poh_tile_reset_slot( fd_poh_tile_ctx_t const * ctx ) {
   return ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot;
 }
 
+
+/* Determine what the next slot is in the leader schedule is that we are
+   leader.  Includes the current slot.  If we are not leader in what
+   remains of the current and next epoch, return ULONG_MAX. */
+
 ulong
 fd_poh_tile_next_leader_slot_hashcnt( fd_poh_tile_ctx_t * ctx ) {
   ulong current_slot = ctx->hashcnt/ctx->hashcnt_per_slot;
@@ -300,7 +319,7 @@ fd_poh_tile_reset( fd_poh_tile_ctx_t * ctx,
   }
   ctx->expect_sequential_leader_slot = ULONG_MAX;
 
-  ctx->next_leader_slot_hashcnt = next_leader_slot_hashcnt( ctx );
+  ctx->next_leader_slot_hashcnt = fd_poh_tile_next_leader_slot_hashcnt( ctx );
   FD_LOG_INFO(( "fd_poh_tile_reset(slot=%lu,next_leader_slot=%lu)", ctx->reset_slot_hashcnt/ctx->hashcnt_per_slot, ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot ));
 
   return leader_before_reset;
@@ -329,35 +348,6 @@ fd_poh_tile_during_housekeeping( fd_poh_tile_ctx_t * ctx ) {
   FD_MHIST_COPY( POH_TILE, BEGIN_LEADER_DELAY_SECONDS,     ctx->begin_leader_delay );
   FD_MHIST_COPY( POH_TILE, FIRST_MICROBLOCK_DELAY_SECONDS, ctx->first_microblock_delay );
   FD_MHIST_COPY( POH_TILE, SLOT_DONE_DELAY_SECONDS,        ctx->slot_done_delay );
-}
-
-void
-fd_poh_tile_before_frag( fd_poh_tile_ctx_t * ctx,
-                         ulong               in_idx,
-                         ulong               sig,
-                         int *               opt_filter ) {
-  if( FD_UNLIKELY( in_idx==ctx->pack_in_idx ) ) {
-    if( FD_LIKELY( fd_disco_poh_sig_pkt_type( sig )==POH_PKT_TYPE_DONE_PACKING ||
-                  fd_disco_poh_sig_pkt_type( sig )==POH_PKT_TYPE_MICROBLOCK ) ) {
-      ulong slot = fd_disco_poh_sig_slot( sig );
-
-      /* The following sequence is possible...
-      
-          1. We become leader in slot 10
-          2. While leader, we switch to a fork that is on slot 8, where we are leader
-          3. We get the in-flight microblocks for slot 10
-
-        These in-flight microblocks need to be dropped, so we check
-        against the hashcnt high water mark (last_hashcnt) rather than the current
-        hashcnt here when determining what to drop.
-
-        We know if the slot is lower than the high water mark it's from a stale
-        leader slot, because we will not become leader for the same slot twice
-        even if we are reset back in time (to prevent duplicate blocks). */
-      if( FD_UNLIKELY( slot<ctx->last_hashcnt/ctx->hashcnt_per_slot ) ) *opt_filter = 1;
-      return;
-    }
-  }
 }
 
 int
@@ -606,7 +596,7 @@ fd_poh_tile_process_skipped_slot( fd_poh_tile_ctx_t * ctx,
   }
 }
 
-int
+void
 fd_poh_tile_begin_leader( fd_poh_tile_ctx_t * ctx,
                           ulong               slot ) {
   FD_TEST( ctx->current_leader_slot == FD_SLOT_NULL );
@@ -649,4 +639,129 @@ fd_poh_tile_skipped_hashcnt_iter_slot_hash( fd_poh_tile_ctx_t * ctx, fd_poh_tile
 void
 fd_poh_tile_unprivileged_init( fd_topo_t *      topo,
                                fd_topo_tile_t * tile,
-                               void *           scratch )
+                               void *           scratch ) {
+
+  FD_SCRATCH_ALLOC_INIT( l, scratch );
+  fd_poh_tile_ctx_t * ctx = FD_SCRATCH_ALLOC_APPEND( l, alignof( fd_poh_tile_ctx_t ), sizeof( fd_poh_tile_ctx_t ) );
+  void * stake_ci = FD_SCRATCH_ALLOC_APPEND( l, fd_stake_ci_align(),              fd_stake_ci_footprint()            );
+  void * sha256   = FD_SCRATCH_ALLOC_APPEND( l, FD_SHA256_ALIGN,                  FD_SHA256_FOOTPRINT                );
+
+#define NONNULL( x ) (__extension__({                                        \
+      __typeof__((x)) __x = (x);                                             \
+      if( FD_UNLIKELY( !__x ) ) FD_LOG_ERR(( #x " was unexpectedly NULL" )); \
+      __x; }))
+
+  ctx->stake_ci = NONNULL( fd_stake_ci_join( fd_stake_ci_new( stake_ci, &ctx->identity_key ) ) );
+  ctx->sha256 = NONNULL( fd_sha256_join( fd_sha256_new( sha256 ) ) );
+  ctx->current_leader_slot = FD_SLOT_NULL;
+
+  ctx->hashcnt = 0UL;
+  ctx->last_hashcnt = 0UL;
+  ctx->next_leader_slot_hashcnt = ULONG_MAX;
+  ctx->reset_slot_hashcnt = ULONG_MAX;
+
+  ctx->expect_sequential_leader_slot = ULONG_MAX;
+
+  ctx->microblocks_lower_bound = 0UL;
+
+  FD_TEST( tile->out_cnt==4UL );
+
+  ulong poh_shred_obj_id = fd_pod_query_ulong( topo->props, "poh_shred", ULONG_MAX );
+  FD_TEST( poh_shred_obj_id!=ULONG_MAX );
+
+  if( FD_UNLIKELY( ctx->reset_slot_hashcnt==ULONG_MAX ) ) FD_LOG_ERR(( "PoH was not initialized by Solana Labs client" ));
+
+  fd_histf_join( fd_histf_new( ctx->begin_leader_delay, FD_MHIST_SECONDS_MIN( POH_TILE, BEGIN_LEADER_DELAY_SECONDS ),
+                                                        FD_MHIST_SECONDS_MAX( POH_TILE, BEGIN_LEADER_DELAY_SECONDS ) ) );
+  fd_histf_join( fd_histf_new( ctx->first_microblock_delay, FD_MHIST_SECONDS_MIN( POH_TILE, FIRST_MICROBLOCK_DELAY_SECONDS  ),
+                                                            FD_MHIST_SECONDS_MAX( POH_TILE, FIRST_MICROBLOCK_DELAY_SECONDS  ) ) );
+  fd_histf_join( fd_histf_new( ctx->slot_done_delay, FD_MHIST_SECONDS_MIN( POH_TILE, SLOT_DONE_DELAY_SECONDS  ),
+                                                     FD_MHIST_SECONDS_MAX( POH_TILE, SLOT_DONE_DELAY_SECONDS  ) ) );
+
+  ctx->shred_out_mem    = topo->workspaces[ topo->objs[ topo->links[ tile->out_link_id_primary ].dcache_obj_id ].wksp_id ].wksp;
+  ctx->shred_out_chunk0 = fd_dcache_compact_chunk0( ctx->shred_out_mem, topo->links[ tile->out_link_id_primary ].dcache );
+  ctx->shred_out_wmark  = fd_dcache_compact_wmark ( ctx->shred_out_mem, topo->links[ tile->out_link_id_primary ].dcache, topo->links[ tile->out_link_id_primary ].mtu );
+  ctx->shred_out_chunk  = ctx->shred_out_chunk0;
+
+  ctx->pack_out_mcache = topo->links[ tile->out_link_id[ 0 ] ].mcache;
+  ctx->pack_out_depth  = fd_mcache_depth( ctx->pack_out_mcache );
+  ctx->pack_out_seq    = 0UL;
+
+  ctx->pack_out_mem    = topo->workspaces[ topo->objs[ topo->links[ tile->out_link_id[ 0 ] ].dcache_obj_id ].wksp_id ].wksp;
+  ctx->pack_out_chunk0 = fd_dcache_compact_chunk0( ctx->pack_out_mem, topo->links[ tile->out_link_id[ 0 ] ].dcache );
+  ctx->pack_out_wmark  = fd_dcache_compact_wmark ( ctx->pack_out_mem, topo->links[ tile->out_link_id[ 0 ] ].dcache, topo->links[ tile->out_link_id[ 0 ] ].mtu );
+  ctx->pack_out_chunk  = ctx->pack_out_chunk0;
+
+  ulong scratch_top = FD_SCRATCH_ALLOC_FINI( l, 1UL );
+  if( FD_UNLIKELY( scratch_top > (ulong)scratch + fd_poh_tile_footprint() ) )
+    FD_LOG_ERR(( "scratch overflow %lu %lu %lu", scratch_top - (ulong)scratch - fd_poh_tile_footprint(), scratch_top, (ulong)scratch + fd_poh_tile_footprint() ));
+}
+
+ulong
+fd_poh_tile_get_slot( fd_poh_tile_ctx_t * ctx ) {
+  return ctx->hashcnt/ctx->hashcnt_per_slot;
+}
+
+ulong
+fd_poh_tile_get_next_leader_slot( fd_poh_tile_ctx_t * ctx ) {
+  return ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot;
+}
+
+ulong
+fd_poh_tile_get_last_slot( fd_poh_tile_ctx_t * ctx ) {
+  return ctx->last_hashcnt/ctx->hashcnt_per_slot;
+}
+
+void
+fd_poh_tile_stake_update( fd_poh_tile_ctx_t * ctx ) {
+  /* It might seem like we do not need to do state transitions in and
+    out of being the leader here, since leader schedule updates are
+    always one epoch in advance (whether we are leader or not would
+    never change for the currently executing slot) but this is not
+    true for new ledgers when the validator first boots.  We will
+    likely be the leader in slot 1, and get notified of the leader
+    schedule for that slot while we are still in it.
+
+    For safety we just handle both transitions, in and out, although
+    the only one possible should be into leader. */
+  ulong next_leader_slot_hashcnt_after_frag = fd_poh_tile_next_leader_slot_hashcnt( ctx );
+
+  int currently_leader = ctx->hashcnt>=ctx->next_leader_slot_hashcnt;
+  int leader_after_frag = ctx->hashcnt>=next_leader_slot_hashcnt_after_frag;
+
+  FD_LOG_INFO(( "stake_update(before_leader=%lu,after_leader=%lu)",
+                ctx->next_leader_slot_hashcnt/ctx->hashcnt_per_slot,
+                next_leader_slot_hashcnt_after_frag/ctx->hashcnt_per_slot ));
+
+  ctx->next_leader_slot_hashcnt = next_leader_slot_hashcnt_after_frag;
+  if( FD_UNLIKELY( currently_leader && !leader_after_frag ) ) {
+    /* Shouldn't ever happen, otherwise we need to do a state
+        transition out of being leader. */
+    FD_LOG_ERR(( "stake update caused us to no longer be leader in an active slot" ));
+  }
+}
+
+ulong
+fd_poh_tile_mixin( fd_poh_tile_ctx_t * ctx,
+                   uchar               hash[ static 32 ] ) {
+  uchar data[ 64 ];
+  fd_memcpy( data, ctx->hash, 32UL );
+  fd_memcpy( data+32UL, hash, 32UL );
+  fd_sha256_hash( data, 64UL, ctx->hash );
+
+  ctx->hashcnt++;
+  ulong hashcnt_delta = ctx->hashcnt - ctx->last_hashcnt;
+  ctx->last_hashcnt = ctx->hashcnt;
+
+  return hashcnt_delta;
+}
+
+int
+fd_poh_tile_is_at_tick_boundary( fd_poh_tile_ctx_t * ctx ) {
+  return !(ctx->hashcnt%ctx->hashcnt_per_tick);
+}
+
+int
+fd_poh_tile_is_no_longer_leader_simple( fd_poh_tile_ctx_t * ctx ) {
+  return ctx->hashcnt>=(ctx->next_leader_slot_hashcnt+ctx->hashcnt_per_slot);
+}

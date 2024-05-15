@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <poll.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 

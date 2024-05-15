@@ -1,3 +1,4 @@
+#include "../../fdctl.h"
 #include "../../../../disco/tiles.h"
 #include "../../config.h"
 #include "../../../../ballet/shred/fd_shred.h"

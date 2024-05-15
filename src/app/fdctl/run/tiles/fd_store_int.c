@@ -1,7 +1,7 @@
 /* Store tile manages a blockstore and serves requests to repair and replay. */
 
 #define _GNU_SOURCE 
-
+#include "../../../../disco/tiles.h"
 #include "generated/store_int_seccomp.h"
 #include "../../../../flamenco/repair/fd_repair.h"
 #include "../../../../flamenco/runtime/fd_blockstore.h"
@@ -19,7 +19,6 @@
 #include "../../../../util/net/fd_eth.h"
 #include "../../../../util/net/fd_ip4.h"
 #include "../../../../util/net/fd_udp.h"
-#include "../../../../disco/tiles.h"
 #include "../../../../disco/shred/fd_stake_ci.h"
 #include "../../../../disco/topo/fd_pod_format.h"
 #include "../../../../disco/tvu/fd_store.h"

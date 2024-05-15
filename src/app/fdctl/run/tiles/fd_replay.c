@@ -35,6 +35,7 @@
 #define MAX_TXNS_PER_REPLAY (8192UL)
 
 #define STORE_IN_IDX   (0UL)
+#define PACK_IN_IDX    (1UL)
 #define POH_OUT_IDX    (0UL)
 #define STORE_OUT_IDX  (1UL)
 
@@ -55,6 +56,11 @@ struct fd_replay_tile_ctx {
   fd_wksp_t * store_in_mem;
   ulong       store_in_chunk0;
   ulong       store_in_wmark;
+
+  // Pack tile input
+  fd_wksp_t * pack_in_mem;
+  ulong       pack_in_chunk0;
+  ulong       pack_in_wmark;
 
   // PoH tile output defs
   fd_frag_meta_t * poh_out_mcache;
@@ -156,28 +162,44 @@ during_frag( void * _ctx,
              ulong  sz,
              int *  opt_filter  FD_PARAM_UNUSED ) {
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)_ctx;
-  
-  if( FD_UNLIKELY( chunk<ctx->store_in_chunk0 || chunk>ctx->store_in_wmark || sz>MAX_TXNS_PER_REPLAY ) ) {
-    FD_LOG_ERR(( "chunk %lu %lu corrupt, not in range [%lu,%lu]", chunk, sz, ctx->store_in_chunk0, ctx->store_in_wmark ));
-  }
 
   void * dst_poh = fd_chunk_to_laddr( ctx->poh_out_mem, ctx->poh_out_chunk );
-  uchar * src = (uchar *)fd_chunk_to_laddr( ctx->store_in_mem, chunk );
-     
-  /* Incoming packet from store tile. Format:
-   * Parent slot (ulong - 8 bytes)
-   * Updated block hash/PoH hash (fd_hash_t - 32 bytes)
-   * Microblock as a list of fd_txn_p_t (sz * sizeof(fd_txn_p_t))
-   */
 
-  ctx->curr_slot = fd_disco_replay_sig_slot( sig );
-  ctx->flags = fd_disco_replay_sig_flags( sig );
+  if( in_idx == STORE_IN_IDX ) {
+    if( FD_UNLIKELY( chunk<ctx->store_in_chunk0 || chunk>ctx->store_in_wmark || sz>MAX_TXNS_PER_REPLAY ) ) {
+      FD_LOG_ERR(( "chunk %lu %lu corrupt, not in range [%lu,%lu]", chunk, sz, ctx->store_in_chunk0, ctx->store_in_wmark ));
+    }
+    uchar * src = (uchar *)fd_chunk_to_laddr( ctx->store_in_mem, chunk );
+    /* Incoming packet from store tile. Format:
+       Parent slot (ulong - 8 bytes)
+       Updated block hash/PoH hash (fd_hash_t - 32 bytes)
+       Microblock as a list of fd_txn_p_t (sz * sizeof(fd_txn_p_t)) */
 
-  ctx->parent_slot = FD_LOAD( ulong, src );
-  src += sizeof(ulong);
-  memcpy( ctx->blockhash.uc, src, sizeof(fd_hash_t) );
-  src += sizeof(fd_hash_t);
-  fd_memcpy( dst_poh, src, sz * sizeof(fd_txn_p_t) );
+    ctx->curr_slot = fd_disco_replay_sig_slot( sig );
+    ctx->flags = fd_disco_replay_sig_flags( sig );
+    ctx->parent_slot = FD_LOAD( ulong, src );
+    src += sizeof(ulong);
+    memcpy( ctx->blockhash.uc, src, sizeof(fd_hash_t) );
+    src += sizeof(fd_hash_t);
+    fd_memcpy( dst_poh, src, sz * sizeof(fd_txn_p_t) );
+  } else if( in_idx == PACK_IN_IDX ) {
+    if( FD_UNLIKELY( chunk<ctx->pack_in_chunk0 || chunk>ctx->pack_in_wmark || (sz-sizeof(fd_microblock_bank_trailer_t))>MAX_TXNS_PER_REPLAY*sizeof(fd_txn_p_t) ) ) {
+      FD_LOG_ERR(( "chunk %lu %lu corrupt, not in range [%lu,%lu]", chunk, sz, ctx->store_in_chunk0, ctx->store_in_wmark ));
+    }
+    uchar * src = (uchar *)fd_chunk_to_laddr( ctx->pack_in_mem, chunk );
+    /* Incoming packet from pack tile. Format:
+       Microblock as a list of fd_txn_p_t (sz * sizeof(fd_txn_p_t))
+       Microblock bank trailer
+    */
+    ctx->curr_slot = fd_disco_poh_sig_slot( sig );
+    if( fd_disco_poh_sig_pkt_type( sig ) & POH_PKT_TYPE_MICROBLOCK ) {
+      ctx->flags = REPLAY_FLAG_PACKED_MICROBLOCK;
+    } else {
+      *opt_filter = 1;
+      return;
+    }
+    fd_memcpy( dst_poh, src, (sz - sizeof(fd_microblock_bank_trailer_t)) );
+  }
 
   if( ctx->flags & REPLAY_FLAG_PACKED_MICROBLOCK ) {
     /* We do not know the parent slot, pick one from fork selection */
@@ -186,8 +208,10 @@ during_frag( void * _ctx,
        !fd_fork_frontier_iter_done( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool );
        iter = fd_fork_frontier_iter_next( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool ) ) {
       fd_exec_slot_ctx_t * ele = &fd_fork_frontier_iter_ele( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool )->slot_ctx;
-
-      max_slot = ele->slot_bank.slot;
+      if ( max_slot < ele->slot_bank.slot ) {
+        max_slot = ele->slot_bank.slot;
+        memcpy( ctx->blockhash.uc, ele->slot_bank.poh.uc, sizeof(fd_hash_t) );
+      }
     }
     ctx->parent_slot = max_slot;
   }
@@ -616,6 +640,12 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->store_in_mem    = topo->workspaces[ topo->objs[ store_in_link->dcache_obj_id ].wksp_id ].wksp;
   ctx->store_in_chunk0 = fd_dcache_compact_chunk0( ctx->store_in_mem, store_in_link->dcache );
   ctx->store_in_wmark  = fd_dcache_compact_wmark( ctx->store_in_mem, store_in_link->dcache, store_in_link->mtu );
+
+  /* Set up pack tile input */
+  fd_topo_link_t * pack_in_link = &topo->links[ tile->in_link_id[ PACK_IN_IDX ] ];
+  ctx->pack_in_mem    = topo->workspaces[ topo->objs[ pack_in_link->dcache_obj_id ].wksp_id ].wksp;
+  ctx->pack_in_chunk0 = fd_dcache_compact_chunk0( ctx->pack_in_mem, pack_in_link->dcache );
+  ctx->pack_in_wmark  = fd_dcache_compact_wmark( ctx->pack_in_mem, pack_in_link->dcache, pack_in_link->mtu );
 
   fd_topo_link_t * store_out_link = &topo->links[ tile->out_link_id[ STORE_OUT_IDX ] ];
   ctx->store_out_mem    = topo->workspaces[ topo->objs[ store_out_link->dcache_obj_id ].wksp_id ].wksp;

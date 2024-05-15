@@ -114,6 +114,8 @@ struct fd_replay_tile_ctx {
   ulong        max_workers;
 
   ulong funk_seed;
+
+  ulong * bank_busy;
 };
 typedef struct fd_replay_tile_ctx fd_replay_tile_ctx_t;
 
@@ -203,7 +205,7 @@ during_frag( void * _ctx,
 static void
 after_frag( void *             _ctx,
             ulong              in_idx     FD_PARAM_UNUSED,
-            ulong              seq        FD_PARAM_UNUSED,
+            ulong              seq,
             ulong *            opt_sig    FD_PARAM_UNUSED,
             ulong *            opt_chunk  FD_PARAM_UNUSED,
             ulong *            opt_sz,
@@ -317,6 +319,11 @@ after_frag( void *             _ctx,
       }
       fd_bank_hash_cmp_unlock( bank_hash_cmp );
     }
+
+    /* Indicate to pack tile we are done processing the transactions so it
+     can pack new microblocks using these accounts.  DO NOT USE THE
+     SANITIZED TRANSACTIONS AFTER THIS POINT, THEY ARE NO LONGER VALID. */
+    fd_fseq_update( ctx->bank_busy, seq );
   } FD_SCRATCH_SCOPE_END;
 }
 void
@@ -598,6 +605,11 @@ unprivileged_init( fd_topo_t *      topo,
 
   /* add it to the frontier */
   fd_fork_frontier_ele_insert( ctx->replay->forks->frontier, replay_slot, ctx->replay->forks->pool );
+
+  ulong busy_obj_id = fd_pod_queryf_ulong( topo->props, ULONG_MAX, "bank_busy.%lu", tile->kind_id );
+  FD_TEST( busy_obj_id!=ULONG_MAX );
+  ctx->bank_busy = fd_fseq_join( fd_topo_obj_laddr( topo, busy_obj_id ) );
+  if( FD_UNLIKELY( !ctx->bank_busy ) ) FD_LOG_ERR(( "banking tile %lu has no busy flag", tile->kind_id ));
 
   /* Set up store tile input */
   fd_topo_link_t * store_in_link = &topo->links[ tile->in_link_id[ STORE_IN_IDX ] ];

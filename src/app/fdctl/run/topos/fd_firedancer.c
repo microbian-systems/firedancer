@@ -76,13 +76,16 @@ fd_topo_firedancer( config_t * _config ) {
   fd_topob_wksp( topo, "repair_store" );
 
   fd_topob_wksp( topo, "store_replay" );
-  fd_topob_wksp( topo, "replay_poh" );
+  fd_topob_wksp( topo, "replay_poh"   );
+  fd_topob_wksp( topo, "bank_busy"  );
+  fd_topob_wksp( topo, "pack_replay"  );
 
   fd_topob_wksp( topo, "net"        );
   fd_topob_wksp( topo, "quic"       );
   fd_topob_wksp( topo, "verify"     );
   fd_topob_wksp( topo, "dedup"      );
   fd_topob_wksp( topo, "shred"      );
+  fd_topob_wksp( topo, "pack"      );
   fd_topob_wksp( topo, "storei"     );
   fd_topob_wksp( topo, "sign"       );
   fd_topob_wksp( topo, "repair"     );
@@ -132,6 +135,7 @@ fd_topo_firedancer( config_t * _config ) {
   /**/                 fd_topob_link( topo, "replay_poh",   "replay_poh",   0,        128UL,                                    128UL*1024UL*1024UL,           16UL  );
 
   /**/                 fd_topob_link( topo, "poh_shred",    "poh_shred",    0,        128UL,                                    FD_NET_MTU,                    1UL   );
+  /**/                 fd_topob_link( topo, "pack_replay",  "pack_replay",  0,        128UL,                                    USHORT_MAX,                    1UL   );
 
   ushort parsed_tile_to_cpu[ FD_TILE_MAX ];
   for( ulong i=0UL; i<FD_TILE_MAX; i++ ) parsed_tile_to_cpu[ i ] = USHORT_MAX; /* Unassigned tiles will be floating. */
@@ -162,6 +166,7 @@ fd_topo_firedancer( config_t * _config ) {
   /**/                             fd_topob_tile( topo, "bhole",   "bhole",   "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       NULL,           0UL );
   /**/                             fd_topob_tile( topo, "sign",    "sign",    "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       NULL,           0UL );
   /**/                             fd_topob_tile( topo, "metric",  "metric",  "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       NULL,           0UL );
+  /**/                             fd_topob_tile( topo, "pack",    "pack",    "metric_in", "metric_in",  tile_to_cpu[ topo->tile_cnt ], 0,       "pack_replay",  0UL );
 
   fd_topo_tile_t * store_tile  = &topo->tiles[ fd_topo_find_tile( topo, "store",  0UL ) ];
   fd_topo_tile_t * replay_tile = &topo->tiles[ fd_topo_find_tile( topo, "replay", 0UL ) ];
@@ -173,11 +178,17 @@ fd_topo_firedancer( config_t * _config ) {
 
   FD_TEST( fd_pod_insertf_ulong( topo->props, blockstore_obj->id, "blockstore" ) );
 
-  /* Create a share1d blockstore to be used by replay. */
+  /* Create a shared blockstore to be used by replay. */
   fd_topo_obj_t * funk_obj = fd_topob_obj_concrete( topo, "funk", "funk", fd_funk_align(), fd_funk_footprint(), config->tiles.replay.funk_sz_gb * FD_SHMEM_GIGANTIC_PAGE_SZ );
   fd_topob_tile_uses( topo, replay_tile, blockstore_obj, FD_SHMEM_JOIN_MODE_READ_WRITE );
 
   FD_TEST( fd_pod_insertf_ulong( topo->props, funk_obj->id, "funk" ) );
+
+  fd_topo_tile_t * pack_tile = &topo->tiles[ fd_topo_find_tile( topo, "pack", 0UL ) ];
+  fd_topo_obj_t * busy_obj = fd_topob_obj( topo, "fseq", "bank_busy" );
+  fd_topob_tile_uses( topo, replay_tile, busy_obj, FD_SHMEM_JOIN_MODE_READ_WRITE );
+  fd_topob_tile_uses( topo, pack_tile, busy_obj, FD_SHMEM_JOIN_MODE_READ_ONLY );
+  FD_TEST( fd_pod_insertf_ulong( topo->props, busy_obj->id, "bank_busy.%lu", 0UL ) );
 
   if( FD_UNLIKELY( affinity_tile_cnt<topo->tile_cnt ) ) {
     FD_LOG_ERR(( "The topology you are using has %lu tiles, but the CPU affinity specified in the config tile as [layout.affinity] only provides for %lu cores. "
@@ -195,6 +206,8 @@ fd_topo_firedancer( config_t * _config ) {
   /*                                      topo, tile_name, tile_kind_id, fseq_wksp,   link_name,      link_kind_id, reliable,            polled */
   FOR(net_tile_cnt) for( ulong j=0UL; j<shred_tile_cnt; j++ )
                        fd_topob_tile_in(  topo, "net",     i,            "metric_in", "shred_net",    j,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  FOR(net_tile_cnt) for( ulong j=0UL; j<quic_tile_cnt; j++ )
+                       fd_topob_tile_in(  topo, "net",     i,            "metric_in", "quic_net",     j,            FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   FOR(net_tile_cnt)    fd_topob_tile_out( topo, "net",     i,                         "net_shred",    i                                                  );
 
   FOR(quic_tile_cnt) for( ulong j=0UL; j<net_tile_cnt; j++ )
@@ -261,13 +274,15 @@ fd_topo_firedancer( config_t * _config ) {
   /**/                 fd_topob_tile_in(  topo, "repair",  0UL,          "metric_in", "store_repair",  0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   );
   
   /**/                 fd_topob_tile_in(  topo, "replay",  0UL,          "metric_in", "store_replay",  0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   );
-  /**/                 fd_topob_tile_out( topo, "replay",  0UL,                        "replay_poh",   0UL                                                  );
+  /**/                 fd_topob_tile_out( topo, "replay",  0UL,                       "replay_poh",    0UL                                                  );
+  /**/                 fd_topob_tile_in(  topo, "replay",  0UL,          "metric_in", "pack_replay",   0UL,          FD_TOPOB_RELIABLE,   FD_TOPOB_POLLED   );
 
-  /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "gossip_pack",   0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  /**/                 fd_topob_tile_in(  topo, "pack",  0UL,           "metric_in", "gossip_pack",   0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "replay_poh",    0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
   /**/                 fd_topob_tile_out( topo, "bhole",  0UL,                        "poh_shred",     0UL                                                  );
-  /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "dedup_pack",    0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
-  /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "gossip_pack",  0UL,          FD_TOPOB_RELIABLE,   FD_TOPOB_POLLED );
+  /**/                 fd_topob_tile_in(  topo, "pack",  0UL,           "metric_in", "dedup_pack",    0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED   ); /* No reliable consumers of networking fragments, may be dropped or overrun */
+  // /**/                 fd_topob_tile_in(  topo, "bhole",  0UL,           "metric_in", "poh_pack",      0UL,          FD_TOPOB_UNRELIABLE, FD_TOPOB_POLLED );
+  //                      fd_topob_tile_out( topo, "poh",    0UL,                        "poh_pack",      0UL                                                );  
 
   for( ulong i=0UL; i<topo->tile_cnt; i++ ) {
     fd_topo_tile_t * tile = &topo->tiles[ i ];
@@ -374,6 +389,13 @@ fd_topo_firedancer( config_t * _config ) {
 
     } else if( FD_UNLIKELY( !strcmp( tile->name, "thread" ) ) ) {
       /* Nothing for now */
+    } else if( FD_UNLIKELY( !strcmp( tile->name, "pack" ) ) ) {
+      strncpy( tile->pack.identity_key_path, config->consensus.identity_path, sizeof(tile->pack.identity_key_path) );
+
+      tile->pack.max_pending_transactions      = config->tiles.pack.max_pending_transactions;
+      tile->pack.bank_tile_count               = config->layout.bank_tile_count;
+      tile->pack.larger_max_cost_per_block     = config->development.bench.larger_max_cost_per_block;
+      tile->pack.larger_shred_limits_per_block = config->development.bench.larger_shred_limits_per_block;
     } else {
       FD_LOG_ERR(( "unknown tile name %lu `%s`", i, tile->name ));
     }

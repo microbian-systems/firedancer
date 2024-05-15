@@ -5,7 +5,6 @@
 
 rep_fd_ledger_dump="$FIREDANCER/dump"
 rep_temp_ledger_upload="$FIREDANCER/.ledger-min"
-# rep_run_ledger_tests="src/flamenco/runtime/tests/run_ledger_tests.sh"
 
 if [ -z "$ROOT_DIR" ]; then
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -30,7 +29,22 @@ set -x
 
 rep_replay_start_time=$(date +%s)
 
-# replay_output=$("$rep_run_ledger_tests" -l "$rep_ledger_min_basename" -s "$rep_snapshot_basename" -e "$END_SLOT" -p $GIGANTIC_PAGES -m $INDEX_MAX 2>&1)
+build/native/gcc/bin/fd_ledger --cmd ingest \
+                                --on-demand-block-ingest 1 \
+                                --end-slot $END_SLOT \
+                                --snapshot dump/$rep_ledger_min_basename/$rep_snapshot_basename \
+                                --page-cnt $GIGANTIC_PAGES \
+                                --index-max $INDEX_MAX \
+                                --funk-page-cnt 100 \
+                                --copy-txn-status 1 \
+                                --checkpt-path dump/$rep_ledger_min_basename \
+                                --checkpt-freq 10000                             
+status=$?
+if [ $status -ne 0 ]; then
+  echo "[-] ledger ingest failed: $status"
+  exit 1
+fi
+
 replay_output=$(build/native/gcc/bin/fd_ledger --reset 1 \
                                --cmd replay \
                                --rocksdb dump/$rep_ledger_min_basename/rocksdb \
@@ -41,18 +55,27 @@ replay_output=$(build/native/gcc/bin/fd_ledger --reset 1 \
                                --verify-acc-hash 1 \
                                --snapshot dump/$rep_ledger_min_basename/$rep_snapshot_basename \
                                --slot-history 5000 \
-                               --copy-txn-status 0 \
                                --allocator wksp \
                                --on-demand-block-ingest 1 \
                                --tile-cpus 5-21 \
                                --use-funk-wksp 0 2>&1)
 
 rep_replay_end_time=$(date +%s)
+echo "replay_start_slot=$START_SLOT" > dump/$rep_ledger_min_basename/metadata
+echo "replay_time=$((rep_replay_end_time - rep_replay_start_time))" >> dump/$rep_ledger_min_basename/metadata
+
 set +x
 echo "$replay_output"
 
 rep_mismatch_slot=$(echo "$replay_output" | grep -oP "Bank hash mismatch! slot=\K\d+")
 rep_mismatch_msg=$(echo "$replay_output" | grep -o "Bank hash mismatch!.*")
+rep_mismatch_ledger_basename="$NETWORK-$rep_mismatch_slot.tar.gz"
+
+if /bin/gsutil -q stat "$UPLOAD_URL/$rep_mismatch_ledger_basename"; then
+  echo "[~] Mismatched ledger $UPLOAD_URL/$rep_mismatch_ledger_basename already uploaded"
+  START_SLOT=$((rep_mismatch_slot + 1))
+  return
+fi
 
 if [ -z "$rep_mismatch_slot" ]; then
   echo "[+] ledger test success"
@@ -63,8 +86,6 @@ if [ -z "$rep_mismatch_slot" ]; then
   START_SLOT=$((END_SLOT + 1))
 else
   echo "[-] ledger test failed"
-  echo "replay_slots_before_mismatch=$((rep_mismatch_slot - START_SLOT))" > dump/$rep_ledger_min_basename/metadata
-  echo "replay_time=$((rep_replay_end_time - rep_replay_start_time))" >> dump/$rep_ledger_min_basename/metadata
   echo "[-] mismatch_slot: $rep_mismatch_slot"
   echo "[-] mismatch_msg: $rep_mismatch_msg"
 
@@ -102,10 +123,10 @@ else
 
     # Upload the ledger to gcloud storage
     # Bucket key activation is already handled by the run_ledger_tests script
-    echo "[~] Compressing $rep_temp_ledger_upload to $FIREDANCER/$NETWORK-$rep_mismatch_slot.tar.gz"
-    tar -czvf $FIREDANCER/$NETWORK-$rep_mismatch_slot.tar.gz $rep_temp_ledger_upload
-    echo "[~] Uploading $FIREDANCER/$NETWORK-$rep_mismatch_slot.tar.gz to $UPLOAD_URL"
-    /bin/gsutil cp -r "$FIREDANCER/$NETWORK-$rep_mismatch_slot.tar.gz" $UPLOAD_URL
+    echo "[~] Compressing $rep_temp_ledger_upload to $FIREDANCER/$rep_mismatch_ledger_basename"
+    tar -czvf $FIREDANCER/$rep_mismatch_ledger_basename $rep_temp_ledger_upload
+    echo "[~] Uploading $FIREDANCER/$rep_mismatch_ledger_basename to $UPLOAD_URL"
+    /bin/gsutil cp -r "$FIREDANCER/$rep_mismatch_ledger_basename" $UPLOAD_URL
   fi
   
   # Set new values of START_SLOT for the next iteration; END_SLOT does not change

@@ -21,6 +21,7 @@ solcap() {
 }
 
 one_repetition() {
+  local rep_idx=$1
   local rooted_start_slot=$(find_rooted_slot $START_SLOT "+")
   local rooted_end_slot=$(find_rooted_slot $END_SLOT "-")
   START_SLOT=$rooted_start_slot
@@ -28,7 +29,7 @@ one_repetition() {
 
   echo "[~] current rooted repetition [$START_SLOT, $END_SLOT]"
   
-  if [[ -n "$REP_SZ" ]]; then
+  if [[ -n "$REP_SZ" || "$rep_idx" -gt 0 ]]; then
     source $ROOT_DIR/minify.sh
   else
     # If REP_SZ is not specified, load the entire ledger in for the replay
@@ -40,14 +41,16 @@ one_repetition() {
     ln -s "$LEDGER/rocksdb" "$LEDGER_MIN/rocksdb"
   fi  
   source $ROOT_DIR/replay.sh
+  ((rep_idx++))
 }
 
 all_repetition() {
   echo "running multiple repetitions. current maybe rooted repetition [$START_SLOT, $END_SLOT]"
+  local rep_idx=0
   while [ $START_SLOT -le $END_SLOT ]; do
     # todo if it enters the second loop, there must have been a mismatch on (START_SLOT-1)
     # call the solcap diff here
-    one_repetition
+    one_repetition $rep_idx
   done
 }
 

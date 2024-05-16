@@ -664,12 +664,7 @@ fd_poh_tile_unprivileged_init( fd_topo_t *      topo,
 
   ctx->microblocks_lower_bound = 0UL;
 
-  FD_TEST( tile->out_cnt==4UL );
 
-  ulong poh_shred_obj_id = fd_pod_query_ulong( topo->props, "poh_shred", ULONG_MAX );
-  FD_TEST( poh_shred_obj_id!=ULONG_MAX );
-
-  if( FD_UNLIKELY( ctx->reset_slot_hashcnt==ULONG_MAX ) ) FD_LOG_ERR(( "PoH was not initialized by Solana Labs client" ));
 
   fd_histf_join( fd_histf_new( ctx->begin_leader_delay, FD_MHIST_SECONDS_MIN( POH_TILE, BEGIN_LEADER_DELAY_SECONDS ),
                                                         FD_MHIST_SECONDS_MAX( POH_TILE, BEGIN_LEADER_DELAY_SECONDS ) ) );

@@ -1046,6 +1046,8 @@ unprivileged_init( fd_topo_t *      topo,
   }
   FD_COMPILER_MFENCE();
 
+  if( FD_UNLIKELY( ctx->poh_tile_ctx->reset_slot_hashcnt==ULONG_MAX ) ) FD_LOG_ERR(( "PoH was not initialized by Solana Labs client" ));
+
   FD_TEST( tile->out_cnt==4UL );
 
   ctx->bank_cnt = tile->in_cnt-2UL;

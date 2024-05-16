@@ -40,30 +40,11 @@
 typedef struct {
   fd_poh_tile_ctx_t * poh_tile_ctx;
 
-  /* If we currently are the leader according the clock AND we have
-     received the leader bank for the slot from the replay stage,
-     this value will be non-NULL.
-
-     Note that we might be inside our leader slot, but not have a bank
-     yet, in which case this will still be NULL.
-
-     It will be NULL for a brief race period between consecutive leader
-     slots, as we ping-pong back to replay stage waiting for a new bank.
-
-     Solana Labs refers to this as the "working bank". */
-  void const * current_leader_bank;
-
-  /* The Solana Labs client needs to be notified when the leader changes,
-     so that they can resume the replay stage if it was suspended waiting. */
-  void * signal_leader_change;
-
   ulong bank_cnt;
 
   ulong stake_in_idx;
 
   ulong pack_in_idx;
-
-  fd_pubkey_t identity_key;
 
   /* These are temporarily set in during_frag so they can be used in
      after_frag once the frag has been validated as not overrun. */
@@ -85,8 +66,12 @@ typedef struct {
 
 extern void fd_ext_bank_acquire( void const * bank );
 extern void fd_ext_bank_release( void const * bank );
-extern void fd_ext_poh_signal_leader_change( void * sender );
-extern void fd_ext_poh_register_tick( void const * bank, uchar const * hash );
+
+void fd_poh_signal_leader_change( fd_poh_ctx_t * ctx FD_PARAM_UNUSED ) { }
+
+void fd_poh_register_tick( fd_poh_ctx_t * ctx         FD_PARAM_UNUSED,
+                           ulong          reset_slot  FD_PARAM_UNUSED,
+                           uchar const *  hash        FD_PARAM_UNUSED ) { }
 
 /* fd_ext_poh_initialize is called by Solana Labs on startup to
    initialize the PoH tile with some static configuration, and the
@@ -110,19 +95,15 @@ fd_poh_initialize( fd_poh_ctx_t * ctx,
                        ulong         hashcnt_per_tick,    /* See clock comments above, will be 12,500 for mainnet-beta. */
                        ulong         ticks_per_slot,      /* See clock comments above, will almost always be 64. */
                        ulong         tick_height,         /* The counter (height) of the tick to start hashing on top of. */
-                       uchar const * last_entry_hash,     /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */
-                       void *        signal_leader_change /* See comment above. */ ) {
-
+                       uchar const * last_entry_hash      /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */ ) {
   fd_poh_tile_initialize( ctx->poh_tile_ctx, hashcnt_duration_ns, hashcnt_per_tick, ticks_per_slot, tick_height,
       last_entry_hash );
-
-  ctx->signal_leader_change = signal_leader_change;
 }
 
 static void
 publish_became_leader( fd_poh_ctx_t * ctx,
                        ulong          slot ) {
-  fd_poh_tile_publish_became_leader( ctx->poh_tile_ctx, ctx->current_leader_bank, slot );
+  fd_poh_tile_publish_became_leader( ctx->poh_tile_ctx, (void const *)ctx->poh_tile_ctx->reset_slot_hashcnt, slot );
 }
 
 /* The PoH tile knows when it should become leader by waiting for its
@@ -133,13 +114,10 @@ publish_became_leader( fd_poh_ctx_t * ctx,
 
 FD_FN_UNUSED static void
 fd_poh_begin_leader( fd_poh_ctx_t * ctx,
-                     void const *   bank,
                      ulong          slot ) {
-  FD_TEST( !ctx->current_leader_bank );
+  FD_TEST( ctx->poh_tile_ctx->current_leader_slot==FD_SLOT_NULL );
 
   fd_poh_tile_begin_leader( ctx->poh_tile_ctx, slot );
-
-  ctx->current_leader_bank = bank;
 
   /* We need to register ticks on the bank for all of the ticks that
      were skipped. */
@@ -154,13 +132,13 @@ fd_poh_begin_leader( fd_poh_ctx_t * ctx,
        on a slot boundary doesn't matter, since the blockhash will
        be ignored. */
     if( FD_UNLIKELY( fd_poh_tile_skipped_hashcnt_iter_is_slot_boundary( ctx->poh_tile_ctx, iter ) ) ) {
-      fd_ext_poh_register_tick( ctx->current_leader_bank, fd_poh_tile_skipped_hashcnt_iter_slot_hash( ctx->poh_tile_ctx, iter ) );
+      fd_poh_register_tick( ctx, ctx->poh_tile_ctx->reset_slot_hashcnt, fd_poh_tile_skipped_hashcnt_iter_slot_hash( ctx->poh_tile_ctx, iter ) );
     } else {
       /* If it's not a slot boundary, the actual blockhash doesn't
          matter -- it won't be used for anything, but we still need
          to register the tick to make the bank tick counter correct. */
       uchar ignored[ 32 ];
-      fd_ext_poh_register_tick( ctx->current_leader_bank, ignored );
+      fd_poh_register_tick( ctx, ctx->poh_tile_ctx->reset_slot_hashcnt, ignored );
     }
   }
 
@@ -169,13 +147,8 @@ fd_poh_begin_leader( fd_poh_ctx_t * ctx,
 
 void
 no_longer_leader( fd_poh_ctx_t * ctx ) {
-  if( FD_UNLIKELY( ctx->current_leader_bank ) ) fd_ext_bank_release( ctx->current_leader_bank );
-  ctx->current_leader_bank = NULL;
-
   fd_poh_tile_no_longer_leader( ctx->poh_tile_ctx );
-
-  FD_COMPILER_MFENCE();
-  fd_ext_poh_signal_leader_change( ctx->signal_leader_change );
+  fd_poh_signal_leader_change( ctx );
 }
 
 /* fd_ext_poh_reset is called by the Solana Labs client when a slot on
@@ -240,7 +213,7 @@ after_credit( void *             _ctx,
 
   if( FD_UNLIKELY( fd_poh_tile_has_ticked_while_leader( ctx->poh_tile_ctx, is_leader ) ) ) {
     /* We ticked while leader... tell the leader bank. */
-    fd_ext_poh_register_tick( ctx->current_leader_bank, ctx->poh_tile_ctx->hash );
+    fd_poh_register_tick( ctx, ctx->poh_tile_ctx->reset_slot_hashcnt, ctx->poh_tile_ctx->hash );
 
     /* And send an empty microblock (a tick) to the shred tile. */
     fd_poh_tile_publish_tick( ctx->poh_tile_ctx, mux );
@@ -379,7 +352,7 @@ after_frag( void *             _ctx,
   if( FD_UNLIKELY( target_slot!=leader_slot || target_slot!=current_slot ) )
     FD_LOG_ERR(( "packed too early or late target_slot=%lu, current_slot=%lu", target_slot, current_slot ));
 
-  FD_TEST( ctx->current_leader_bank );
+  FD_TEST( ctx->poh_tile_ctx->current_leader_slot!=FD_SLOT_NULL );
   FD_TEST( ctx->poh_tile_ctx->microblocks_lower_bound<ctx->poh_tile_ctx->max_microblocks_per_slot );
   ctx->poh_tile_ctx->microblocks_lower_bound += 1UL;
 
@@ -403,7 +376,7 @@ after_frag( void *             _ctx,
      with the leader bank.  We don't need to publish the tick since
      sending the microblock below is the publishing action. */
   if( FD_UNLIKELY( fd_poh_tile_is_at_tick_boundary( ctx->poh_tile_ctx ) ) ) {
-    fd_ext_poh_register_tick( ctx->current_leader_bank, ctx->poh_tile_ctx->hash );
+    fd_poh_register_tick( ctx, ctx->poh_tile_ctx->reset_slot_hashcnt, ctx->poh_tile_ctx->hash );
     if( FD_UNLIKELY( fd_poh_tile_is_no_longer_leader_simple( ctx->poh_tile_ctx ) ) ) {
       /* We ticked while leader and are no longer leader... transition
          the state machine. */
@@ -422,12 +395,13 @@ privileged_init( fd_topo_t *      topo,
 
   FD_SCRATCH_ALLOC_INIT( l, scratch );
   fd_poh_ctx_t * ctx = FD_SCRATCH_ALLOC_APPEND( l, alignof( fd_poh_ctx_t ), sizeof( fd_poh_ctx_t ) );
+  ctx->poh_tile_ctx = FD_SCRATCH_ALLOC_APPEND( l, fd_poh_tile_align(), fd_poh_tile_footprint()  );
 
   if( FD_UNLIKELY( !strcmp( tile->poh.identity_key_path, "" ) ) )
     FD_LOG_ERR(( "identity_key_path not set" ));
 
   const uchar * identity_key = fd_keyload_load( tile->poh.identity_key_path, /* pubkey only: */ 1 );
-  fd_memcpy( ctx->identity_key.uc, identity_key, 32UL );
+  fd_memcpy( ctx->poh_tile_ctx->identity_key.uc, identity_key, 32UL );
 }
 
 static void
@@ -436,22 +410,14 @@ unprivileged_init( fd_topo_t *      topo,
                    void *           scratch ) {
   FD_SCRATCH_ALLOC_INIT( l, scratch );
   fd_poh_ctx_t * ctx = FD_SCRATCH_ALLOC_APPEND( l, alignof( fd_poh_ctx_t ), sizeof( fd_poh_ctx_t ) );
-
+  ctx->poh_tile_ctx = FD_SCRATCH_ALLOC_APPEND( l, fd_poh_tile_align(), fd_poh_tile_footprint()  );
 #define NONNULL( x ) (__extension__({                                        \
       __typeof__((x)) __x = (x);                                             \
       if( FD_UNLIKELY( !__x ) ) FD_LOG_ERR(( #x " was unexpectedly NULL" )); \
       __x; }))
 
   // TODO: scratch alloc needs fixing!
-  fd_poh_tile_unprivileged_init( topo, tile, scratch );
-
-  ctx->current_leader_bank = NULL;
-  ctx->signal_leader_change = NULL;
-
-  ulong poh_shred_obj_id = fd_pod_query_ulong( topo->props, "poh_shred", ULONG_MAX );
-  FD_TEST( poh_shred_obj_id!=ULONG_MAX );
-
-  FD_TEST( tile->out_cnt==4UL );
+  fd_poh_tile_unprivileged_init( topo, tile, ctx->poh_tile_ctx );
 
   ctx->bank_cnt = tile->in_cnt-2UL;
   ctx->stake_in_idx = tile->in_cnt-2UL;

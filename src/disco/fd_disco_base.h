@@ -20,6 +20,9 @@
 #define REPLAY_FLAG_FINALIZE_BLOCK      (0x01UL)
 #define REPLAY_FLAG_PACKED_MICROBLOCK   (0x02UL)
 
+#define REPLAY_PKT_TYPE_MICROBLOCK (0UL)
+#define REPLAY_PKT_TYPE_INIT       (1UL)
+
 /* FD_NET_MTU is the max full packet size, with ethernet, IP, and UDP
    headers that can go in or out of the net tile.  2048 is the maximum
    XSK entry size, so this value follows naturally. */

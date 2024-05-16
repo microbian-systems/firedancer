@@ -122,8 +122,17 @@ struct fd_replay_tile_ctx {
   ulong funk_seed;
 
   ulong * bank_busy;
+  uint poh_init_done;
 };
 typedef struct fd_replay_tile_ctx fd_replay_tile_ctx_t;
+
+typedef struct __attribute__((packed)) {
+  double hashcnt_duration_ns;
+  ulong  hashcnt_per_tick;
+  ulong  ticks_per_slot;
+  ulong  tick_height;
+  uchar  last_entry_hash[32];
+} fd_poh_init_msg_t;
 
 FD_FN_CONST static inline ulong
 scratch_align( void ) {
@@ -241,7 +250,7 @@ after_frag( void *             _ctx,
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)_ctx;
 
   /* do a replay */
-  ulong txn_cnt = *opt_sz;
+  ulong txn_cnt = (in_idx == STORE_IN_IDX) ? *opt_sz : (*opt_sz - sizeof(fd_microblock_bank_trailer_t)) / sizeof(fd_txn_p_t);
   fd_txn_p_t * txns       = (fd_txn_p_t *)fd_chunk_to_laddr( ctx->poh_out_mem, ctx->poh_out_chunk );
 
   FD_SCRATCH_SCOPE_BEGIN {
@@ -350,6 +359,13 @@ after_frag( void *             _ctx,
      can pack new microblocks using these accounts.  DO NOT USE THE
      SANITIZED TRANSACTIONS AFTER THIS POINT, THEY ARE NO LONGER VALID. */
     fd_fseq_update( ctx->bank_busy, seq );
+
+    /* Publish mblk to POH. */
+    ulong tspub = fd_frag_meta_ts_comp( fd_tickcount() );
+    ulong sig = fd_disco_replay_sig(ctx->curr_slot, REPLAY_PKT_TYPE_MICROBLOCK);
+    fd_mcache_publish(ctx->poh_out_mcache, ctx->poh_out_depth, ctx->poh_out_seq, sig, ctx->poh_out_chunk, txn_cnt, 0UL, *opt_tsorig, tspub);
+    ctx->poh_out_chunk = fd_dcache_compact_next(ctx->poh_out_chunk, txn_cnt * sizeof(fd_txn_p_t), ctx->poh_out_chunk0, ctx->poh_out_wmark);
+    ctx->poh_out_seq = fd_seq_inc(ctx->poh_out_seq, 1UL);
   } FD_SCRATCH_SCOPE_END;
 }
 void
@@ -435,6 +451,25 @@ after_credit( void *             _ctx,
 
   ulong tsorig = fd_frag_meta_ts_comp( fd_tickcount() );
 
+  if( FD_UNLIKELY( ctx->poh_init_done == 0 && ctx->slot_ctx->blockstore ) ) {
+    fd_poh_init_msg_t * msg = fd_chunk_to_laddr(ctx->poh_out_mem, ctx->poh_out_chunk);
+    fd_epoch_bank_t * epoch_bank = fd_exec_epoch_ctx_epoch_bank( ctx->epoch_ctx );
+    msg->hashcnt_per_tick = ctx->epoch_ctx->epoch_bank.hashes_per_tick;
+    msg->ticks_per_slot   = ctx->epoch_ctx->epoch_bank.ticks_per_slot;
+    msg->hashcnt_duration_ns = (double)(epoch_bank->ns_per_slot / epoch_bank->ticks_per_slot) / (double) msg->hashcnt_per_tick;
+    if( ctx->slot_ctx->slot_bank.block_hash_queue.last_hash ) {
+      memcpy(msg->last_entry_hash, ctx->slot_ctx->slot_bank.block_hash_queue.last_hash->uc, sizeof(fd_hash_t));
+    } else {
+      memset(msg->last_entry_hash, 0UL, sizeof(fd_hash_t));
+    }
+    msg->tick_height = ctx->slot_ctx->slot_bank.slot * msg->ticks_per_slot;
+
+    ulong sig = fd_disco_replay_sig(ctx->slot_ctx->slot_bank.slot, REPLAY_PKT_TYPE_INIT);
+    fd_mcache_publish(ctx->poh_out_mcache, ctx->poh_out_depth, ctx->poh_out_seq, sig, ctx->poh_out_chunk, sizeof(fd_poh_init_msg_t), 0UL, tsorig, 0UL);
+    ctx->poh_out_chunk = fd_dcache_compact_next(ctx->poh_out_chunk, sizeof(fd_poh_init_msg_t), ctx->poh_out_chunk0, ctx->poh_out_wmark);
+    ctx->poh_out_seq = fd_seq_inc(ctx->poh_out_seq, 1UL);
+  }
+
   long now = fd_log_wallclock();
   if( now - ctx->last_stake_weights_push_time > (long)5e9 ) {
     ctx->last_stake_weights_push_time = now;
@@ -483,7 +518,7 @@ static void
 during_housekeeping( void * _ctx ) {
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)_ctx;
   (void)ctx;
-  // fd_mcache_seq_update( ctx->poh_out_sync, ctx->poh_out_seq );
+  fd_mcache_seq_update( ctx->poh_out_sync, ctx->poh_out_seq );
   // fd_mcache_seq_update( ctx->store_out_sync, ctx->store_out_seq );
 }
 
@@ -636,6 +671,8 @@ unprivileged_init( fd_topo_t *      topo,
   FD_TEST( busy_obj_id!=ULONG_MAX );
   ctx->bank_busy = fd_fseq_join( fd_topo_obj_laddr( topo, busy_obj_id ) );
   if( FD_UNLIKELY( !ctx->bank_busy ) ) FD_LOG_ERR(( "banking tile %lu has no busy flag", tile->kind_id ));
+
+  ctx->poh_init_done = 0U;
 
   /* Set up store tile input */
   fd_topo_link_t * store_in_link = &topo->links[ tile->in_link_id[ STORE_IN_IDX ] ];

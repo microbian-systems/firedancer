@@ -199,22 +199,24 @@ during_frag( void * _ctx,
       return;
     }
     fd_memcpy( dst_poh, src, (sz - sizeof(fd_microblock_bank_trailer_t)) );
+    src += (sz-sizeof(fd_microblock_bank_trailer_t));
+    fd_microblock_bank_trailer_t * t = (fd_microblock_bank_trailer_t *)src;
+    ctx->parent_slot = (ulong)t->bank;
   }
 
-  if( ctx->flags & REPLAY_FLAG_PACKED_MICROBLOCK ) {
-    /* We do not know the parent slot, pick one from fork selection */
-    ulong max_slot = 0; /* FIXME: default to snapshot slot/smr */
-    for( fd_fork_frontier_iter_t iter = fd_fork_frontier_iter_init( ctx->replay->forks->frontier, ctx->replay->forks->pool );
-       !fd_fork_frontier_iter_done( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool );
-       iter = fd_fork_frontier_iter_next( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool ) ) {
-      fd_exec_slot_ctx_t * ele = &fd_fork_frontier_iter_ele( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool )->slot_ctx;
-      if ( max_slot < ele->slot_bank.slot ) {
-        max_slot = ele->slot_bank.slot;
-        memcpy( ctx->blockhash.uc, ele->slot_bank.poh.uc, sizeof(fd_hash_t) );
-      }
-    }
-    ctx->parent_slot = max_slot;
-  }
+  // if( ctx->flags & REPLAY_FLAG_PACKED_MICROBLOCK ) {
+  //   /* We do not know the parent slot, pick one from fork selection */
+  //   ulong max_slot = 0; /* FIXME: default to snapshot slot/smr */
+  //   for( fd_fork_frontier_iter_t iter = fd_fork_frontier_iter_init( ctx->replay->forks->frontier, ctx->replay->forks->pool );
+  //      !fd_fork_frontier_iter_done( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool );
+  //      iter = fd_fork_frontier_iter_next( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool ) ) {
+  //     fd_exec_slot_ctx_t * ele = &fd_fork_frontier_iter_ele( iter, ctx->replay->forks->frontier, ctx->replay->forks->pool )->slot_ctx;
+  //     if ( max_slot < ele->slot_bank.slot ) {
+  //       max_slot = ele->slot_bank.slot;
+  //     }
+  //   }
+  //   ctx->parent_slot = max_slot;
+  // }
 
   fd_blockstore_start_read( ctx->replay->blockstore );
   fd_block_t * block_ = fd_blockstore_block_query( ctx->replay->blockstore, ctx->curr_slot );

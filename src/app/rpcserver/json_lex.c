@@ -70,6 +70,7 @@ long json_lex_parse_number(struct json_lex_state* state, const char* start_pos) 
   }
   fd_memcpy(state->last_str, start_pos, text_sz);
   state->last_str[text_sz] = '\0';
+  state->last_str_sz = text_sz;
   state->pos = (ulong)(pos - state->json);
   return (isfloat ? JSON_TOKEN_FLOAT : JSON_TOKEN_INTEGER);
 }

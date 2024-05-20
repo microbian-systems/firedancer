@@ -704,7 +704,7 @@ method_getIdentity(struct fd_web_replier* replier, struct json_values* values, f
   (void)ctx;
   fd_web_replier_error(replier, "getIdentity is not implemented");
   return 0;
-  /*
+  /* FIXME!
     fd_textstream_t * ts = fd_web_replier_textstream(replier);
     fd_textstream_sprintf(ts, "{\"jsonrpc\":\"2.0\",\"result\":{\"identity\":\"");
     fd_textstream_encode_base58(ts, ctx->identity->uc, sizeof(fd_pubkey_t));
@@ -731,7 +731,7 @@ method_getInflationRate(struct fd_web_replier* replier, struct json_values* valu
   (void)ctx;
   fd_web_replier_error(replier, "getInflationRate is not implemented");
   return 0;
-  /*
+  /* FIXME!
     fd_textstream_t * ts = fd_web_replier_textstream(replier);
     fd_inflation_rates_t rates;
     calculate_inflation_rates( get_slot_ctx(ctx), &rates );
@@ -1062,7 +1062,7 @@ method_getSlotLeader(struct fd_web_replier* replier, struct json_values* values,
   (void)values;
   (void)ctx;
   fd_web_replier_error(replier, "getSlotLeader is not implemented");
-  /*
+  /* FIXME!
     fd_textstream_t * ts = fd_web_replier_textstream(replier);
     fd_textstream_sprintf(ts, "{\"jsonrpc\":\"2.0\",\"result\":\"");
     fd_pubkey_t const * leader = fd_epoch_leaders_get(fd_exec_epoch_ctx_leaders( ctx->replay->epoch_ctx ), get_slot_ctx(ctx)->slot_bank.slot);

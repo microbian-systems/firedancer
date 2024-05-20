@@ -1,6 +1,7 @@
 #include "json_lex.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 void json_lex_state_new(struct json_lex_state* state,
                         const char* json,
@@ -10,11 +11,15 @@ void json_lex_state_new(struct json_lex_state* state,
   state->pos = 0;
   state->last_tok = JSON_TOKEN_ERROR;
   state->last_bool = 0;
-  fd_quickstring_new(&state->last_str);
+  state->last_str = state->last_str_firstbuf;
+  state->last_str_sz = 0;
+  state->last_str_alloc = sizeof(state->last_str_firstbuf);
+  state->last_str_firstbuf[0] = '\0';
 }
 
 void json_lex_state_delete(struct json_lex_state* state) {
-  fd_quickstring_delete(&state->last_str);
+  if (state->last_str != state->last_str_firstbuf)
+    free(state->last_str);
 }
 
 // Parse a numeric constant
@@ -51,13 +56,20 @@ long json_lex_parse_number(struct json_lex_state* state, const char* start_pos) 
       break;
     default:
       state->pos = (ulong)(start_pos - state->json);
-      fd_quickstring_sprintf(&state->last_str, "malformed number at position %lu in json", state->pos);
+      json_lex_sprintf(state, "malformed number at position %lu in json", state->pos);
       return JSON_TOKEN_ERROR;
     }
   }
 
   // Store the number in string form
-  fd_quickstring_set(&state->last_str, start_pos, (ulong)(pos - start_pos));
+  ulong text_sz = (ulong)(pos - start_pos);
+  if( text_sz >= state->last_str_alloc ) {
+    state->pos = (ulong)(start_pos - state->json);
+    json_lex_sprintf(state, "malformed number at position %lu in json", state->pos);
+    return JSON_TOKEN_ERROR;
+  }
+  fd_memcpy(state->last_str, start_pos, text_sz);
+  state->last_str[text_sz] = '\0';
   state->pos = (ulong)(pos - state->json);
   return (isfloat ? JSON_TOKEN_FLOAT : JSON_TOKEN_INTEGER);
 }
@@ -132,7 +144,7 @@ Also, '"' and '\' are not allowed.
         return t;
       t += 3;
       break;
-    case 4: // E1..EC 
+    case 4: // E1..EC
       if (!(t+3 <= t_end && MATCH(t[1], 0x80, 0xBF) && MATCH(t[2], 0x80, 0xBF)))
         return t;
       t += 3;
@@ -170,7 +182,8 @@ Also, '"' and '\' are not allowed.
 
 // Parse a json string. All characters are decoded to pure UTF-8
 long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) {
-  fd_quickstring_clear(&state->last_str);
+  state->last_str_sz = 0;
+  state->last_str[0] = '\0';
   const char* pos = start_pos + 1; // Skip leading quote
   const char* const end_pos = state->json + state->json_sz;
   // Loop over all characters
@@ -179,7 +192,7 @@ long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) 
       state->pos = (ulong)(pos + 1 - state->json);
       return JSON_TOKEN_STRING;
     }
-    
+
     if (*pos != '\\') {
       // A segment of simple text without escapes
       const char* s = pos;
@@ -191,11 +204,11 @@ long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) 
       if (err_pos) {
         // Report the error
         state->pos = (ulong)(start_pos - state->json);
-        fd_quickstring_sprintf(&state->last_str, "invalid character literal at position %ld in json", err_pos - state->json);
+        json_lex_sprintf(state, "invalid character literal at position %ld in json", err_pos - state->json);
         return JSON_TOKEN_ERROR;
       }
       // Just copy out the text
-      fd_memcpy(fd_quickstring_append_prepare(&state->last_str, (ulong)(pos - s)), s, (ulong)(pos - s));
+      fd_memcpy(json_lex_append_prepare(state, (ulong)(pos - s)), s, (ulong)(pos - s));
       continue; // break out of switch and continue outer loop
     }
 
@@ -213,7 +226,7 @@ long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) 
     case 'n':  ch = 0xA;  pos += 2; break;
     case 'r':  ch = 0xD;  pos += 2; break;
     case 't':  ch = 0x9;  pos += 2; break;
-      
+
     case 'u': // Hexadecimal escape
       if (pos + 6 <= end_pos) {
         ch = 0;
@@ -236,26 +249,26 @@ long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) 
         }
       }
       // Fall through to error case
-      __attribute__((fallthrough)); 
+      __attribute__((fallthrough));
     default:
       state->pos = (ulong)(start_pos - state->json);
-      fd_quickstring_sprintf(&state->last_str, "invalid character literal at position %ld in json", pos - state->json);
+      json_lex_sprintf(state, "invalid character literal at position %ld in json", pos - state->json);
       return JSON_TOKEN_ERROR;
     }
     // Append the escaped character
-    fd_quickstring_append_char(&state->last_str, ch);
-    
+    json_lex_append_char(state, ch);
+
   }
   // We were looking for a closing quote
   state->pos = (ulong)(start_pos - state->json);
-  fd_quickstring_sprintf(&state->last_str, "unterminated string starting at position %lu in json", state->pos);
+  json_lex_sprintf(state, "unterminated string starting at position %lu in json", state->pos);
   return JSON_TOKEN_ERROR;
 }
 
 // Report a lexical error
 long json_lex_error(struct json_lex_state* state, const char* pos) {
   state->pos = (ulong)(pos - state->json);
-  fd_quickstring_sprintf(&state->last_str, "lexical error at position %lu in json", state->pos);
+  json_lex_sprintf(state, "lexical error at position %lu in json", state->pos);
   return JSON_TOKEN_ERROR;
 }
 
@@ -296,7 +309,7 @@ long json_lex_next_token(struct json_lex_state* state) {
         return state->last_tok = JSON_TOKEN_NULL;
       }
       return state->last_tok = json_lex_error(state, pos);
-      
+
     case 't': // true
       if (pos + 4 <= end_pos && pos[1] == 'r' && pos[2] == 'u' && pos[3] == 'e') {
         state->pos = (ulong)(pos + 4 - state->json);
@@ -304,7 +317,7 @@ long json_lex_next_token(struct json_lex_state* state) {
         return state->last_tok = JSON_TOKEN_BOOL;
       }
       return state->last_tok = json_lex_error(state, pos);
-      
+
     case 'f': // false
       if (pos + 5 <= end_pos && pos[1] == 'a' && pos[2] == 'l' && pos[3] == 's' && pos[4] == 'e') {
         state->pos = (ulong)(pos + 5 - state->json);
@@ -320,7 +333,7 @@ long json_lex_next_token(struct json_lex_state* state) {
 
     case '"': // string
       return state->last_tok = json_lex_parse_string(state, pos);
-      
+
     default: // Any other character
       return state->last_tok = json_lex_error(state, pos);
     }
@@ -330,5 +343,93 @@ long json_lex_next_token(struct json_lex_state* state) {
 }
 
 const char* json_lex_get_text(json_lex_state_t* state, ulong* sz) {
-  return fd_quickstring_get(&state->last_str, sz);
+  if (sz != NULL)
+    *sz = state->last_str_sz;
+  return state->last_str;
+}
+
+// Convert the string to an integer (assuming decimal representation)
+long json_lex_as_int(json_lex_state_t* lex) {
+  // Gangster conversion of decimal text to int
+  const char* i = lex->last_str;
+  const char* i_end = i + lex->last_str_sz;
+  int isneg = 0;
+  if (i < i_end && *i == '-') {
+    isneg = 1;
+    i++;
+  }
+  long n = 0;
+  while (i < i_end)
+    n = n*10 + (*(i++) - '0');
+  return (isneg ? -n : n);
+}
+
+// Convert the string to a float
+double json_lex_as_float(json_lex_state_t* lex) {
+  return strtod(lex->last_str, NULL);
+}
+
+// Reserve space at the end of the string for additional text. The
+// pointer to the new space is returned (e.g. for memcpy).
+char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz) {
+  // Get the new string size
+  ulong new_sz = lex->last_str_sz + sz;
+  // Make sure there is enough room, including a null terminator
+  if (new_sz + 1 > lex->last_str_alloc) {
+    // Grow the allocation
+    do {
+      lex->last_str_alloc <<= 1;
+    } while (new_sz + 1 > lex->last_str_alloc);
+    char* oldstr = lex->last_str;
+    lex->last_str = (char*)malloc(lex->last_str_alloc);
+    // Copy the old content to the new space
+    fd_memcpy(lex->last_str, oldstr, lex->last_str_sz);
+    if (oldstr != lex->last_str_firstbuf)
+      free(oldstr);
+  }
+  // Stick on a null terminator
+  char* res = lex->last_str + lex->last_str_sz;
+  res[sz] = '\0';
+  lex->last_str_sz = new_sz;
+  return res;
+}
+
+// Append a unicode character to the string. The character is
+// converted to UTF-8 encoding.
+void json_lex_append_char(json_lex_state_t* lex, uint ch) {
+  // Encode in UTF-8
+  if (ch < 0x80) {
+    char* dest = json_lex_append_prepare(lex, 1);
+    *dest =     (char)ch;
+  } else if (ch < 0x800) {
+    char* dest = json_lex_append_prepare(lex, 2);
+    *(dest++) = (char)((ch>>6) | 0xC0);
+    *dest =     (char)((ch & 0x3F) | 0x80);
+  } else if (ch < 0x10000) {
+    char* dest = json_lex_append_prepare(lex, 3);
+    *(dest++) = (char)((ch>>12) | 0xE0);
+    *(dest++) = (char)(((ch>>6) & 0x3F) | 0x80);
+    *dest =     (char)((ch & 0x3F) | 0x80);
+  } else if (ch < 0x110000) {
+    char* dest = json_lex_append_prepare(lex, 4);
+    *(dest++) = (char)((ch>>18) | 0xF0);
+    *(dest++) = (char)(((ch>>12) & 0x3F) | 0x80);
+    *(dest++) = (char)(((ch>>6) & 0x3F) | 0x80);
+    *dest =     (char)((ch & 0x3F) | 0x80);
+  }
+}
+
+// Replaces the string with the result of a formatted printf.If
+// there isn't enough allocated space, the output is truncated.
+void json_lex_sprintf(json_lex_state_t* lex, const char* format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  int r = vsnprintf(lex->last_str, lex->last_str_alloc, format, ap);
+  va_end(ap);
+  if (r >= 0)
+    lex->last_str_sz = (ulong)r;
+  else {
+    lex->last_str_sz = 0;
+    lex->last_str[0] = '\0';
+  }
 }

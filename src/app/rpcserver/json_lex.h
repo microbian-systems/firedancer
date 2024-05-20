@@ -3,7 +3,6 @@
 *****/
 
 #include "../../util/fd_util.h"
-#include "fd_quickstring.h"
 
 // Lexical token value
 #define JSON_TOKEN_LBRACKET 1 /* [ */
@@ -35,7 +34,10 @@ struct json_lex_state {
     // Value of last boolean
     int last_bool;
     // Value of last string, number (as text), or error message. UTF-8 encoded.
-    fd_quickstring_t last_str;
+    char* last_str;
+    ulong last_str_sz;
+    ulong last_str_alloc;
+    char  last_str_firstbuf[512];
 };
 typedef struct json_lex_state json_lex_state_t;
 
@@ -52,3 +54,22 @@ long json_lex_next_token(json_lex_state_t* state);
 // Get the last lexical text result. This can be a string, number (as
 // text), or error message.
 const char* json_lex_get_text(json_lex_state_t* state, ulong* sz);
+
+// Convert the string to an integer (assuming decimal representation)
+long json_lex_as_int(json_lex_state_t* lex);
+
+// Convert the string to a float
+double json_lex_as_float(json_lex_state_t* lex);
+
+// Reserve space at the end of the string for additional text. The
+// pointer to the new space is returned (e.g. for memcpy).
+char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz);
+
+// Append a unicode character to the string. The character is
+// converted to UTF-8 encoding.
+void json_lex_append_char(json_lex_state_t* lex, uint ch);
+
+// Replaces the string with the result of a formatted printf.If
+// there isn't enough allocated space, the output is truncated.
+void json_lex_sprintf(json_lex_state_t* lex, const char* format, ...)
+  __attribute__ ((format (printf, 2, 3)));

@@ -123,7 +123,7 @@ json_parse_params_value(struct fd_web_replier* replier, json_lex_state_t* lex, s
     // Append to the path
     *path_last = (JSON_TOKEN_INTEGER<<16);
     // Store the leaf value in values, indexed by the current path
-    long val = fd_quickstring_as_int(&lex->last_str);
+    long val = json_lex_as_int(lex);
     json_add_value(values, path, &val, sizeof(val));
     break;
   }
@@ -132,7 +132,7 @@ json_parse_params_value(struct fd_web_replier* replier, json_lex_state_t* lex, s
     // Append to the path
     *path_last = (JSON_TOKEN_FLOAT<<16);
     // Store the leaf value in values, indexed by the current path
-    double val = fd_quickstring_as_float(&lex->last_str);
+    double val = json_lex_as_float(lex);
     json_add_value(values, path, &val, sizeof(val));
     break;
   }

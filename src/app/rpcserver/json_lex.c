@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
+static char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz);
+static void json_lex_append_char(json_lex_state_t* lex, uint ch);
+
 void json_lex_state_new(struct json_lex_state* state,
                         const char* json,
                         ulong json_sz) {
@@ -23,7 +26,7 @@ void json_lex_state_delete(struct json_lex_state* state) {
 }
 
 // Parse a numeric constant
-long json_lex_parse_number(struct json_lex_state* state, const char* start_pos) {
+static long json_lex_parse_number(struct json_lex_state* state, const char* start_pos) {
   // Scan to the end of the number
   const char* pos = start_pos;
   const char* const end_pos = state->json + state->json_sz;
@@ -77,7 +80,7 @@ long json_lex_parse_number(struct json_lex_state* state, const char* start_pos) 
 
 // Validate a segment of UTF-8 encoded test. If an error is found, a
 // pointer to it is returned. A NULL is returned if there is no error.
-const char* json_lex_validate_encoding(const char* t, const char* t_end) {
+static const char* json_lex_validate_encoding(const char* t, const char* t_end) {
   /****
 Code Points		First Byte	Second Byte	Third Byte	Fourth Byte
 U+0020..U+007F		20..7F
@@ -182,7 +185,7 @@ Also, '"' and '\' are not allowed.
 }
 
 // Parse a json string. All characters are decoded to pure UTF-8
-long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) {
+static long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) {
   state->last_str_sz = 0;
   state->last_str[0] = '\0';
   const char* pos = start_pos + 1; // Skip leading quote
@@ -267,7 +270,7 @@ long json_lex_parse_string(struct json_lex_state* state, const char* start_pos) 
 }
 
 // Report a lexical error
-long json_lex_error(struct json_lex_state* state, const char* pos) {
+static long json_lex_error(struct json_lex_state* state, const char* pos) {
   state->pos = (ulong)(pos - state->json);
   json_lex_sprintf(state, "lexical error at position %lu in json", state->pos);
   return JSON_TOKEN_ERROR;
@@ -372,7 +375,7 @@ double json_lex_as_float(json_lex_state_t* lex) {
 
 // Reserve space at the end of the string for additional text. The
 // pointer to the new space is returned (e.g. for memcpy).
-char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz) {
+static char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz) {
   // Get the new string size
   ulong new_sz = lex->last_str_sz + sz;
   // Make sure there is enough room, including a null terminator
@@ -397,7 +400,7 @@ char* json_lex_append_prepare(json_lex_state_t* lex, ulong sz) {
 
 // Append a unicode character to the string. The character is
 // converted to UTF-8 encoding.
-void json_lex_append_char(json_lex_state_t* lex, uint ch) {
+static void json_lex_append_char(json_lex_state_t* lex, uint ch) {
   // Encode in UTF-8
   if (ch < 0x80) {
     char* dest = json_lex_append_prepare(lex, 1);

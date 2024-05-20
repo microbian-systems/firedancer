@@ -423,16 +423,28 @@ static void json_lex_append_char(json_lex_state_t* lex, uint ch) {
   }
 }
 
-// Replaces the string with the result of a formatted printf.If
-// there isn't enough allocated space, the output is truncated.
+// Replaces the string with the result of a formatted printf.
 void json_lex_sprintf(json_lex_state_t* lex, const char* format, ...) {
   va_list ap;
   va_start(ap, format);
   int r = vsnprintf(lex->last_str, lex->last_str_alloc, format, ap);
   va_end(ap);
-  if (r >= 0)
+  if (r >= 0) {
+    if ((ulong)r >= lex->last_str_alloc) {
+      /* Try again with more space */
+      if (lex->last_str != lex->last_str_firstbuf)
+        free(lex->last_str);
+      do {
+        lex->last_str_alloc <<= 1;
+      } while ((ulong)r + 1U > lex->last_str_alloc);
+      lex->last_str = (char*)malloc(lex->last_str_alloc);
+      va_list ap;
+      va_start(ap, format);
+      r = vsnprintf(lex->last_str, lex->last_str_alloc, format, ap);
+      va_end(ap);
+    }
     lex->last_str_sz = (ulong)r;
-  else {
+  } else {
     lex->last_str_sz = 0;
     lex->last_str[0] = '\0';
   }

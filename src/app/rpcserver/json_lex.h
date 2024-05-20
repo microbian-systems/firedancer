@@ -61,7 +61,6 @@ long json_lex_as_int(json_lex_state_t* lex);
 // Convert the string to a float
 double json_lex_as_float(json_lex_state_t* lex);
 
-// Replaces the string with the result of a formatted printf. If
-// there isn't enough allocated space, the output is truncated.
+// Replaces the string with the result of a formatted printf.
 void json_lex_sprintf(json_lex_state_t* lex, const char* format, ...)
   __attribute__ ((format (printf, 2, 3)));

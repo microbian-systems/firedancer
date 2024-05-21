@@ -1271,19 +1271,31 @@ method_getVersion(struct fd_web_replier* replier, struct json_values* values, fd
   return 0;
 }
 
+static void
+vote_account_to_json(fd_textstream_t * ts, fd_vote_accounts_pair_t_mapnode_t * vote_node) {
+  fd_textstream_sprintf(ts, "{\"commission\":0,\"epochVoteAccount\":true,\"epochCredits\":[[1,64,0],[2,192,64]],\"nodePubkey\":\")");
+  fd_textstream_encode_base58(ts, vote_node->elem.value.owner.uc, sizeof(fd_pubkey_t));
+  fd_textstream_sprintf(ts, "\",\"lastVote\":147,\"activatedStake\":%lu,\"votePubkey\":\"",
+                        vote_node->elem.value.lamports);
+  fd_textstream_encode_base58(ts, vote_node->elem.key.uc, sizeof(fd_pubkey_t));
+  fd_textstream_sprintf(ts, "\"}");
+}
+
 // Implementation of the "getVoteAccounts" methods
-// curl http://localhost:8123 -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "id": 1, "method": "getVoteAccounts", "params": [ { "votePubkey": "3ZT31jkAGhUaw8jsy4bTknwBMP8i4Eueh52By4zXcsVw" } ] }'
+// curl http://localhost:8123 -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "id": 1, "method": "getVoteAccounts", "params": [ { "votePubkey": "6j9YPqDdYWc9NWrmV6tSLygog9CrkG9BfYHb5zu9eidH" } ] }'
 
 static int
 method_getVoteAccounts(struct fd_web_replier* replier, struct json_values* values, fd_rpc_ctx_t * ctx) {
   FD_METHOD_SCRATCH_BEGIN( 1<<29 ) { /* read_epoch consumes a ton of scratch space! */
     fd_epoch_bank_t * epoch_bank = read_epoch_bank(ctx, fd_scratch_virtual());
     fd_vote_accounts_t * accts = &epoch_bank->stakes.vote_accounts;
-    (void)accts;
+    fd_vote_accounts_pair_t_mapnode_t * root = accts->vote_accounts_root;
+    fd_vote_accounts_pair_t_mapnode_t * pool = accts->vote_accounts_pool;
 
     fd_textstream_t * ts = fd_web_replier_textstream(replier);
     fd_textstream_sprintf(ts, "{\"jsonrpc\":\"2.0\",\"result\":{\"current\":[");
 
+    int needcomma = 0;
     for ( ulong i = 0; ; ++i ) {
       // Path to argument
       uint path[4];
@@ -1297,11 +1309,14 @@ method_getVoteAccounts(struct fd_web_replier* replier, struct json_values* value
         // End of list
         break;
 
-      fd_pubkey_t voteacct;
-      fd_base58_decode_32((const char *)arg, voteacct.uc);
+      fd_vote_accounts_pair_t_mapnode_t key  = { 0 };
+      fd_base58_decode_32((const char *)arg, key.elem.key.uc);
+      fd_vote_accounts_pair_t_mapnode_t * vote_node = fd_vote_accounts_pair_t_map_find( pool, root, &key );
+      if( vote_node == NULL ) continue;
 
-      fd_textstream_sprintf(ts, "%s{\"commission\":0,\"epochVoteAccount\":true,\"epochCredits\":[[1,64,0],[2,192,64]],\"nodePubkey\":\"B97CCUW3AEZFGy6uUg6zUdnNYvnVq5VG8PUtb2HayTDD\",\"lastVote\":147,\"activatedStake\":42,\"votePubkey\":\"%s\"}",
-                            (i==0 ? "" : ","), (const char*)arg);
+      if( needcomma ) fd_textstream_sprintf(ts, ",");
+      vote_account_to_json(ts, vote_node);
+      needcomma = 1;
     }
 
     fd_textstream_sprintf(ts, "],\"delinquent\":[]},\"id\":%lu}" CRLF, ctx->call_id);

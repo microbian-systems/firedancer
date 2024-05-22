@@ -482,7 +482,7 @@ static void
 acc_mgr_saved( fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg ) {
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)arg;
   void * dst_notif = fd_chunk_to_laddr( ctx->notif_out_mem, ctx->notif_out_chunk );
-  fd_replay_notif_msg_t * msg = (fd_replay_notif_msg_t *)dst_notif;;
+  fd_replay_notif_msg_t * msg = (fd_replay_notif_msg_t *)dst_notif;
   msg->type = FD_REPLAY_SAVED_TYPE;
   msg->acct_saved.acct_id = *pubkey;
   msg->acct_saved.funk_xid = txn->xid;

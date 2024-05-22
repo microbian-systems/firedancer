@@ -213,15 +213,26 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
 
   if( fd_crds_data_is_vote( data ) ) {
     fd_gossip_vote_t const * gossip_vote = &data->inner.vote;
-    
+    fd_txn_t * txn = gossip_vote->txn.txn;
+
     uchar * vote_txn_msg = fd_chunk_to_laddr( ctx->pack_out_mem, ctx->pack_out_chunk );
-    ulong vote_txn_sz    = gossip_vote->txn.raw_sz;
+    ulong vote_txn_sz    = fd_ulong_align_up( gossip_vote->txn.raw_sz, 2UL );
     memcpy( vote_txn_msg, gossip_vote->txn.raw, vote_txn_sz );
+    vote_txn_msg += vote_txn_sz;
+
+    ulong txn_footprint = fd_txn_footprint(txn->instr_cnt, txn->addr_table_lookup_cnt);
+    memcpy( vote_txn_msg, txn, txn_footprint );
+    vote_txn_msg += txn_footprint;
+
+    ushort payload_sz = (ushort)gossip_vote->txn.raw_sz;
+    *((ushort *)vote_txn_msg) = payload_sz;
+
+    ulong total_msg_sz = vote_txn_sz + txn_footprint + 2UL;
     ulong sig = 1UL; 
     fd_mcache_publish( ctx->pack_out_mcache, ctx->pack_out_depth, ctx->pack_out_seq, sig, ctx->pack_out_chunk,
-      vote_txn_sz, 0UL, 0, 0 );
+      total_msg_sz, 0UL, 0, 0 );
     ctx->pack_out_seq   = fd_seq_inc( ctx->pack_out_seq, 1UL );
-    ctx->pack_out_chunk = fd_dcache_compact_next( ctx->pack_out_chunk, vote_txn_sz, ctx->pack_out_chunk0, ctx->pack_out_wmark );
+    ctx->pack_out_chunk = fd_dcache_compact_next( ctx->pack_out_chunk, total_msg_sz, ctx->pack_out_chunk0, ctx->pack_out_wmark );
   } else if( fd_crds_data_is_contact_info_v1( data ) ) {
     fd_gossip_contact_info_v1_t const * contact_info = &data->inner.contact_info_v1;
     FD_LOG_DEBUG(("contact info v1 - ip: " FD_IP4_ADDR_FMT ", port: %u", FD_IP4_ADDR_FMT_ARGS( contact_info->gossip.addr.inner.ip4 ), contact_info->gossip.port ));

@@ -111,6 +111,9 @@ struct fd_replay_tile_ctx {
   ulong        max_workers;
 
   ulong funk_seed;
+  fd_latest_vote_t * latest_votes;
+  fd_capture_ctx_t * capture_ctx;
+  FILE * capture_file;
 };
 typedef struct fd_replay_tile_ctx fd_replay_tile_ctx_t;
 
@@ -134,6 +137,8 @@ scratch_footprint( fd_topo_tile_t const * tile FD_PARAM_UNUSED ) {
   l = FD_LAYOUT_APPEND( l, fd_exec_epoch_ctx_align(), fd_exec_epoch_ctx_footprint( VOTE_ACC_MAX ) );
   l = FD_LAYOUT_APPEND( l, fd_replay_align(), fd_replay_footprint() );
   l = FD_LAYOUT_APPEND( l, fd_forks_align(), fd_forks_footprint( FORKS_MAX ) );
+  l = FD_LAYOUT_APPEND( l, fd_latest_vote_deque_align(), fd_latest_vote_deque_footprint() );
+  l = FD_LAYOUT_APPEND( l, FD_CAPTURE_CTX_ALIGN, FD_CAPTURE_CTX_FOOTPRINT );
   return FD_LAYOUT_FINI( l, scratch_align() );
 }
 
@@ -221,7 +226,7 @@ after_frag( void *             _ctx,
 
       fork->slot_ctx.slot_bank.prev_slot = fork->slot_ctx.slot_bank.slot;
       fork->slot_ctx.slot_bank.slot      = ctx->curr_slot;
-
+      fork->slot_ctx.latest_votes        = ctx->latest_votes;
       fd_funk_txn_xid_t xid;
 
       fd_memcpy(xid.uc, ctx->blockhash.uc, sizeof(fd_funk_txn_xid_t));
@@ -231,7 +236,7 @@ after_frag( void *             _ctx,
       fork->slot_ctx.funk_txn = fd_funk_txn_prepare(ctx->replay->funk, fork->slot_ctx.funk_txn, &xid, 1);
       fd_funk_end_write( ctx->replay->funk );
 
-      int res = fd_runtime_publish_old_txns( &fork->slot_ctx, NULL );
+      int res = fd_runtime_publish_old_txns( &fork->slot_ctx, ctx->capture_ctx );
       if( res != FD_RUNTIME_EXECUTE_SUCCESS ) {
         FD_LOG_ERR(( "txn publishing failed" ));
       }
@@ -243,9 +248,10 @@ after_frag( void *             _ctx,
     } else if ( fork->slot_ctx.slot_bank.slot != ctx->curr_slot ) {
       FD_LOG_ERR(( "unexpected fork switch mid block execution, cannot continue" ));
     }
-
+    if( ctx->capture_ctx )
+      fd_solcap_writer_set_slot( ctx->capture_ctx->capture, fork->slot_ctx.slot_bank.slot );
     // Exeecute all txns which were succesfully prepared
-    int res = fd_runtime_execute_txns_in_waves_tpool( &fork->slot_ctx, NULL,
+    int res = fd_runtime_execute_txns_in_waves_tpool( &fork->slot_ctx, ctx->capture_ctx,
                                                       txns, txn_cnt,
                                                       ctx->tpool, ctx->max_workers );
     if( res != 0 && !( ctx->flags & REPLAY_FLAG_PACKED_MICROBLOCK ) ) {
@@ -259,7 +265,7 @@ after_frag( void *             _ctx,
       fd_memcpy( fork->slot_ctx.slot_bank.poh.uc, ctx->blockhash.uc, sizeof(fd_hash_t) );
       fd_block_info_t block_info[1];
       block_info->signature_cnt = fork->slot_ctx.signature_cnt;
-      int res = fd_runtime_block_execute_finalize_tpool( &fork->slot_ctx, NULL, block_info, NULL, 1UL );
+      int res = fd_runtime_block_execute_finalize_tpool( &fork->slot_ctx, ctx->capture_ctx, block_info, NULL, 1UL );
       if( res != FD_RUNTIME_EXECUTE_SUCCESS ) {
         FD_LOG_WARNING(("block finalize failed"));
         *opt_filter = 1;
@@ -298,21 +304,17 @@ after_frag( void *             _ctx,
       fd_bank_hash_cmp_insert( bank_hash_cmp, ctx->curr_slot, bank_hash, 1 );
 
       /* Try to move the bank hash comparison window forward */
-      while (1) {
-        ulong *children, nchildren, parent_slot = bank_hash_cmp->slot;
-        if ( fd_blockstore_next_slot_query( ctx->replay->blockstore, parent_slot, &children, &nchildren ) == FD_BLOCKSTORE_OK ) {
-          for (ulong i = 0; i < nchildren; i++) {
-            if( FD_LIKELY( fd_bank_hash_cmp_check( bank_hash_cmp, children[i] ) ) ) {
-              bank_hash_cmp->slot = children[i];
-              break;
-            }
-          }
-        } else {
-          FD_LOG_WARNING( ("failed at getting children of slot %lu", parent_slot) );
+      ulong parent_slot = bank_hash_cmp->slot;
+      for (ulong i = parent_slot; i <= ctx->curr_slot; i++) {
+        if( FD_LIKELY( fd_bank_hash_cmp_check( bank_hash_cmp, i ) ) ) {
+          bank_hash_cmp->slot = i;
         }
-        if(bank_hash_cmp->slot == parent_slot) break;
       }
+
       fd_bank_hash_cmp_unlock( bank_hash_cmp );
+
+      if (NULL != ctx->capture_ctx)
+        fd_solcap_writer_flush( ctx->capture_ctx->capture );
     }
   } FD_SCRATCH_SCOPE_END;
 }
@@ -523,7 +525,9 @@ unprivileged_init( fd_topo_t *      topo,
     adding any setup here. */
   ctx->epoch_ctx_mem         = FD_SCRATCH_ALLOC_APPEND( l, fd_exec_epoch_ctx_align(), fd_exec_epoch_ctx_footprint( VOTE_ACC_MAX ) );
   void * replay_mem          = FD_SCRATCH_ALLOC_APPEND( l, fd_replay_align(), fd_replay_footprint() );
-  void *       forks_mem     = FD_SCRATCH_ALLOC_APPEND( l, fd_forks_align(), fd_forks_footprint( FORKS_MAX ) );
+  void * forks_mem           = FD_SCRATCH_ALLOC_APPEND( l, fd_forks_align(), fd_forks_footprint( FORKS_MAX ) );
+  void * latest_votes_mem    = FD_SCRATCH_ALLOC_APPEND( l, fd_latest_vote_deque_align(), fd_latest_vote_deque_footprint() );
+  void * capture_ctx_mem     = FD_SCRATCH_ALLOC_APPEND( l, FD_CAPTURE_CTX_ALIGN, FD_CAPTURE_CTX_FOOTPRINT );
 
   fd_scratch_attach( smem, fmem, SCRATCH_MAX, SCRATCH_DEPTH );
 
@@ -659,6 +663,20 @@ unprivileged_init( fd_topo_t *      topo,
 
   /* add it to the frontier */
   fd_fork_frontier_ele_insert( ctx->replay->forks->frontier, replay_slot, ctx->replay->forks->pool );
+
+  ctx->latest_votes = fd_latest_vote_deque_join( fd_latest_vote_deque_new( latest_votes_mem ) );
+  ctx->slot_ctx->latest_votes = ctx->latest_votes;
+
+  if( strlen(tile->replay.capture) > 0 ) {
+    ctx->capture_ctx = fd_capture_ctx_new( capture_ctx_mem );
+    ctx->capture_ctx->checkpt_freq = ULONG_MAX;
+    ctx->capture_file = fopen( tile->replay.capture, "w+" );
+    if( FD_UNLIKELY( !ctx->capture_file ) ) {
+      FD_LOG_ERR(( "fopen(%s) failed (%d-%s)", tile->replay.capture, errno, strerror( errno ) ));
+    }
+    ctx->capture_ctx->capture_txns = 0;
+    fd_solcap_writer_init( ctx->capture_ctx->capture, ctx->capture_file );
+  }
 
   /* Set up store tile input */
   fd_topo_link_t * store_in_link = &topo->links[ tile->in_link_id[ STORE_IN_IDX ] ];

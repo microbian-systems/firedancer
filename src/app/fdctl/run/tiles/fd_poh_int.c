@@ -51,10 +51,11 @@ typedef struct {
   uchar _txns[ USHORT_MAX ];
   fd_microblock_trailer_t * _microblock_trailer;
 
+  int is_initialized;
+
   fd_poh_tile_in_ctx_t bank_in[ 32 ];
   fd_poh_tile_in_ctx_t stake_in;
   fd_poh_tile_in_ctx_t pack_in;
-
 } fd_poh_ctx_t;
 
 /* The PoH tile needs to interact with the Solana Labs address space to
@@ -91,13 +92,14 @@ void fd_poh_register_tick( fd_poh_ctx_t * ctx         FD_PARAM_UNUSED,
 
 void
 fd_poh_initialize( fd_poh_ctx_t * ctx,
-                       double        hashcnt_duration_ns, /* See clock comments above, will be 500ns for mainnet-beta. */
-                       ulong         hashcnt_per_tick,    /* See clock comments above, will be 12,500 for mainnet-beta. */
-                       ulong         ticks_per_slot,      /* See clock comments above, will almost always be 64. */
-                       ulong         tick_height,         /* The counter (height) of the tick to start hashing on top of. */
-                       uchar const * last_entry_hash      /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */ ) {
+                   double         hashcnt_duration_ns, /* See clock comments above, will be 500ns for mainnet-beta. */
+                   ulong          hashcnt_per_tick,    /* See clock comments above, will be 12,500 for mainnet-beta. */
+                   ulong          ticks_per_slot,      /* See clock comments above, will almost always be 64. */
+                   ulong          tick_height,         /* The counter (height) of the tick to start hashing on top of. */
+                   uchar const *  last_entry_hash      /* Points to start of a 32 byte region of memory, the hash itself at the tick height. */ ) {
   fd_poh_tile_initialize( ctx->poh_tile_ctx, hashcnt_duration_ns, hashcnt_per_tick, ticks_per_slot, tick_height,
       last_entry_hash );
+  ctx->is_initialized = 1;
 }
 
 static void
@@ -195,6 +197,10 @@ static inline void
 after_credit( void *             _ctx,
               fd_mux_context_t * mux ) {
   fd_poh_ctx_t * ctx = (fd_poh_ctx_t *)_ctx;
+
+  if( !ctx->is_initialized ) {
+    return;
+  }
 
   int is_leader       = fd_poh_tile_is_leader( ctx->poh_tile_ctx );
   int hashes_produced = fd_poh_tile_do_hashing( ctx->poh_tile_ctx, is_leader );
@@ -419,13 +425,14 @@ unprivileged_init( fd_topo_t *      topo,
   // TODO: scratch alloc needs fixing!
   fd_poh_tile_unprivileged_init( topo, tile, ctx->poh_tile_ctx );
 
+  ctx->is_initialized = 0;
   ctx->bank_cnt = tile->in_cnt-2UL;
   ctx->stake_in_idx = tile->in_cnt-2UL;
   ctx->pack_in_idx = tile->in_cnt-1UL;
-  for( ulong i=0; i<tile->in_cnt-1; i++ ) {
+  for( ulong i=0UL; i<tile->in_cnt-2UL; i++ ) {
     fd_topo_link_t * link = &topo->links[ tile->in_link_id[ i ] ];
     fd_topo_wksp_t * link_wksp = &topo->workspaces[ topo->objs[ link->dcache_obj_id ].wksp_id ];
-    FD_TEST( strcmp( topo->links[ tile->in_link_id[ ctx->stake_in_idx ] ].name, "replay_poh" )==0 );
+    FD_TEST( strcmp( link->name, "replay_poh" )==0 );
 
     ctx->bank_in[ i ].mem    = link_wksp->wksp;
     ctx->bank_in[ i ].chunk0 = fd_dcache_compact_chunk0( ctx->bank_in[i].mem, link->dcache );

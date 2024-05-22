@@ -693,6 +693,10 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->store_out_chunk  = ctx->store_out_chunk0;
   
   fd_topo_link_t * poh_out_link = &topo->links[ tile->out_link_id[ POH_OUT_IDX ] ];
+  ctx->poh_out_mcache = poh_out_link->mcache;
+  ctx->poh_out_sync   = fd_mcache_seq_laddr( ctx->poh_out_mcache );
+  ctx->poh_out_depth  = fd_mcache_depth( ctx->poh_out_mcache );
+  ctx->poh_out_seq    = fd_mcache_seq_query( ctx->poh_out_sync );
   ctx->poh_out_mem    = topo->workspaces[ topo->objs[ poh_out_link->dcache_obj_id ].wksp_id ].wksp;
   ctx->poh_out_chunk0 = fd_dcache_compact_chunk0( ctx->poh_out_mem, poh_out_link->dcache );
   ctx->poh_out_wmark  = fd_dcache_compact_wmark( ctx->poh_out_mem, poh_out_link->dcache, poh_out_link->mtu );

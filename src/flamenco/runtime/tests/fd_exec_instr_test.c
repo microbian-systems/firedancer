@@ -220,6 +220,10 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
   assert( epoch_ctx );
   assert( slot_ctx  );
 
+  ctx->slot_ctx  = slot_ctx;
+  ctx->txn_ctx   = txn_ctx;
+  txn_ctx->valloc                  = fd_alloc_virtual( alloc );
+
   /* Initial variables */
   txn_ctx->loaded_accounts_data_size_limit = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES;
   txn_ctx->heap_size = FD_VM_DEFAULT_HEAP_SZ;
@@ -229,6 +233,17 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
   epoch_bank->rent.lamports_per_uint8_year = 3480;
   epoch_bank->rent.exemption_threshold = 2;
   epoch_bank->rent.burn_percent = 50;
+
+  /* Create account manager */
+
+  fd_acc_mgr_t * acc_mgr = fd_acc_mgr_new( fd_scratch_alloc( FD_ACC_MGR_ALIGN, FD_ACC_MGR_FOOTPRINT ), funk );
+  assert( acc_mgr );
+
+  /* Set up slot context */
+
+  slot_ctx->epoch_ctx = epoch_ctx;
+  slot_ctx->funk_txn  = funk_txn;
+  slot_ctx->acc_mgr   = acc_mgr;
 
   /* Restore feature flags */
 
@@ -246,17 +261,6 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
     fd_features_set( &epoch_ctx->features, id, 0UL );
   }
 
-  /* Create account manager */
-
-  fd_acc_mgr_t * acc_mgr = fd_acc_mgr_new( fd_scratch_alloc( FD_ACC_MGR_ALIGN, FD_ACC_MGR_FOOTPRINT ), funk );
-  assert( acc_mgr );
-
-  /* Set up slot context */
-
-  slot_ctx->epoch_ctx = epoch_ctx;
-  slot_ctx->funk_txn  = funk_txn;
-  slot_ctx->acc_mgr   = acc_mgr;
-
   /* TODO: Restore slot_bank */
 
   fd_slot_bank_new( &slot_ctx->slot_bank );
@@ -271,7 +275,6 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
   txn_ctx->slot_ctx                = slot_ctx;
   txn_ctx->funk_txn                = funk_txn;
   txn_ctx->acc_mgr                 = acc_mgr;
-  txn_ctx->valloc                  = fd_alloc_virtual( alloc );
   txn_ctx->compute_unit_limit      = test_ctx->cu_avail;
   txn_ctx->compute_unit_price      = 0;
   txn_ctx->compute_meter           = test_ctx->cu_avail;
@@ -325,6 +328,15 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
   txn_descriptor->acct_addr_cnt = (ushort) test_ctx->accounts_count;
   txn_descriptor->addr_table_adtl_cnt = 0;
   txn_ctx->txn_descriptor = txn_descriptor;
+
+  /* Precompiles are allowed to read data from all instructions.
+     We need to at least set pointers to the current instruction.
+     Note: for simplicity we point the entire raw tx data to the
+     instruction data, this is probably something we can improve. */
+  txn_descriptor->instr_cnt = 1;
+  txn_ctx->_txn_raw->raw = info->data;
+  txn_descriptor->instr[0].data_off = 0;
+  txn_descriptor->instr[0].data_sz = info->data_sz;
 
   /* Load accounts into database */
 
@@ -484,8 +496,6 @@ _context_create( fd_exec_instr_test_runner_t *        runner,
   }
 
   ctx->epoch_ctx = epoch_ctx;
-  ctx->slot_ctx  = slot_ctx;
-  ctx->txn_ctx   = txn_ctx;
   ctx->funk_txn  = funk_txn;
   ctx->acc_mgr   = acc_mgr;
   ctx->valloc    = fd_scratch_virtual();
@@ -501,13 +511,11 @@ _context_destroy( fd_exec_instr_test_runner_t * runner,
   if( !ctx ) return;
   fd_exec_slot_ctx_t *  slot_ctx  = ctx->slot_ctx;
   if( !slot_ctx ) return;
-  fd_exec_epoch_ctx_t * epoch_ctx = slot_ctx->epoch_ctx;
   fd_acc_mgr_t *        acc_mgr   = slot_ctx->acc_mgr;
   fd_funk_txn_t *       funk_txn  = slot_ctx->funk_txn;
 
   fd_wksp_free_laddr( fd_alloc_delete( fd_alloc_leave( ctx->txn_ctx->valloc.self ) ) );
   fd_exec_slot_ctx_delete ( fd_exec_slot_ctx_leave ( slot_ctx  ) );
-  fd_exec_epoch_ctx_delete( fd_exec_epoch_ctx_leave( epoch_ctx ) );
   fd_acc_mgr_delete( acc_mgr );
   fd_scratch_pop();
   fd_funk_txn_cancel( runner->funk, funk_txn, 1 );
@@ -733,7 +741,7 @@ fd_exec_instr_fixture_run( fd_exec_instr_test_runner_t *        runner,
   fd_wksp_t * wksp = fd_wksp_attach( "wksp" );
   fd_exec_instr_ctx_t ctx[1];
   if( FD_UNLIKELY( !_context_create( runner, ctx, &test->input, wksp ) ) ) {
-    fd_wksp_detach( wksp );
+    _context_destroy( runner, ctx, wksp );
     return 0;
   }
 
@@ -775,7 +783,7 @@ fd_exec_instr_test_run( fd_exec_instr_test_runner_t *        runner,
   fd_wksp_t * wksp = fd_wksp_attach( "wksp" );
   fd_exec_instr_ctx_t ctx[1];
   if( !_context_create( runner, ctx, input, wksp ) ) {
-    fd_wksp_detach( wksp );
+    _context_destroy( runner, ctx, wksp );
     return 0UL;
   }
 

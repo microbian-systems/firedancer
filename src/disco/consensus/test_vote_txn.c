@@ -34,6 +34,13 @@ main( int argc, char ** argv ) {
       fd_cstr_to_shmem_page_sz( _page_sz ), page_cnt, fd_shmem_cpu_idx( numa_idx ), "wksp", 0UL );
   FD_TEST( wksp );
 
+  /* Alloc */
+  void * alloc_shmem =
+      fd_wksp_alloc_laddr( wksp, fd_alloc_align(), fd_alloc_footprint(), TEST_VOTE_TXN_MAGIC );
+  void *       alloc_shalloc = fd_alloc_new( alloc_shmem, TEST_VOTE_TXN_MAGIC );
+  fd_alloc_t * alloc         = fd_alloc_join( alloc_shalloc, 0UL );
+  fd_valloc_t  valloc        = fd_alloc_virtual( alloc );
+
   /* Create deque of fd_vote_lockout_t */
   ulong height = 32;
   void * mem = fd_wksp_alloc_laddr(
@@ -53,6 +60,7 @@ main( int argc, char ** argv ) {
   memset( &vote_update, 0, sizeof(fd_vote_state_update_t) );
   vote_update.lockouts = tower;
   vote_update.root = 100;
+  vote_update.has_root = 1;
   FD_TEST( 32UL == getrandom( vote_update.hash.key, 32UL, 0 ) );
   static ulong now = 1715701506716580798UL;
   vote_update.timestamp = &now;
@@ -61,25 +69,13 @@ main( int argc, char ** argv ) {
   uchar txn_meta_buf[ FD_TXN_MAX_SZ ];
   uchar txn_buf [ FD_TXN_MTU ];
   ulong txn_size = fd_vote_txn_generate( &vote_update, &vote_pubkeys[0], &vote_pubkeys[1], vote_identity_privkey, vote_authority_privkey, txn_meta_buf, txn_buf);
-  FD_LOG_NOTICE(("fd_vote_txn_generate: %lu bytes", txn_size));
+  FD_LOG_NOTICE(("fd_vote_txn_generate: vote txn has %lu bytes", txn_size));
 
   /* Parse the transaction back to fd_txn_t */
-  uchar out_buf[ FD_TXN_MAX_SZ ];
-  fd_txn_t * parsed_txn = (fd_txn_t *)out_buf;
-  ulong out_sz = fd_txn_parse( txn_buf, txn_size, out_buf, NULL );
-  FD_TEST( out_sz );
-  FD_TEST( parsed_txn );
-  FD_TEST( parsed_txn->instr_cnt == 1);
-
-  uchar program_id = parsed_txn->instr[0].program_id;
-  uchar* account_addr = (txn_buf + parsed_txn->acct_addr_off
-                        + FD_TXN_ACCT_ADDR_SZ * program_id );
-
-  FD_LOG_NOTICE( ("Parse the vote txn: voter_addr=%32J, txn_acct_cnt=%u(readonly_sign=%u, readonly_unsign=%u), sign_cnt=%u | instruction#0: program=%32J",
-                  txn_buf + parsed_txn->acct_addr_off,
-                  parsed_txn->acct_addr_cnt,
-                  parsed_txn->readonly_signed_cnt,
-                  parsed_txn->readonly_unsigned_cnt,
-                  parsed_txn->signature_cnt,
-                  account_addr) );
+  fd_vote_state_update_t parsed_vote_update;
+  fd_vote_txn_parse(txn_buf, txn_size, valloc, &parsed_vote_update);
+  FD_LOG_NOTICE((".root: %ld == %ld", vote_update.root, parsed_vote_update.root));
+  FD_LOG_NOTICE((".has_root: %u == %u", vote_update.has_root, parsed_vote_update.has_root));
+  FD_LOG_NOTICE((".timestamp: %lu == %lu", *vote_update.timestamp, *parsed_vote_update.timestamp));
+  FD_LOG_NOTICE((".hash: %32J == %32J", vote_update.hash.key, parsed_vote_update.hash.key));
 }

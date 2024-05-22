@@ -1,5 +1,8 @@
 #include "fd_vote.h"
 
+#pragma GCC diagnostic ignored "-Wformat"
+#pragma GCC diagnostic ignored "-Wformat-extra-args"
+
 ulong
 fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
                      fd_pubkey_t *vote_acct_pubkey,
@@ -22,7 +25,7 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
   vote_txn_accounts.acct_cnt              = 3;
   vote_txn_accounts.signers_w             = pubkeys;              /* 2 pubkeys: vote account, vote authority */
   vote_txn_accounts.signers_r             = NULL;                 /* 0 pubkey */
-  vote_txn_accounts.non_signers_w         = NULL;                 /* 0 pubkey  */
+  vote_txn_accounts.non_signers_w         = NULL;                 /* 0 pubkey */
   vote_txn_accounts.non_signers_r         = &vote_program_pubkey; /* 1 pubkey: vote program */
   FD_TEST( fd_txn_base_generate( out_txn_meta_buf, out_txn_buf, 2, &vote_txn_accounts, NULL ) );
 
@@ -41,7 +44,7 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
 
   /* Add signatures */
   fd_sha512_t sha;
-  fd_txn_t * txn_meta = (fd_txn_t *) out_txn_meta_buf;
+  fd_txn_t * txn_meta = (fd_txn_t *) fd_type_pun( out_txn_meta_buf );
   fd_ed25519_sign( /* sig */ out_txn_buf + txn_meta->signature_off,
                    /* msg */ out_txn_buf + txn_meta->message_off,
                    /* sz  */ txn_size - txn_meta->message_off,
@@ -56,4 +59,50 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
                    &sha);
 
   return txn_size;
+}
+
+int
+fd_vote_txn_parse(uchar txn_buf [static FD_TXN_MTU],
+                  ulong txn_size,
+                  fd_valloc_t valloc,
+                  fd_vote_state_update_t *out_vote_update){
+  uchar out_buf[ FD_TXN_MAX_SZ ];
+  fd_txn_t * parsed_txn = (fd_txn_t *)fd_type_pun( out_buf );
+  ulong out_sz = fd_txn_parse( txn_buf, txn_size, out_buf, NULL );
+  FD_TEST( out_sz );
+  FD_TEST( parsed_txn );
+  FD_TEST( parsed_txn->instr_cnt == 1);
+
+  uchar program_id = parsed_txn->instr[0].program_id;
+  uchar* program_account_addr = (txn_buf + parsed_txn->acct_addr_off
+                                 + FD_TXN_ACCT_ADDR_SZ * program_id );
+
+  if ( memcmp( program_account_addr, fd_solana_vote_program_id.key, sizeof( fd_pubkey_t ) ) ) {
+    FD_LOG_WARNING( ("fd_vote_txn_parse: txn targets program %32J instead of %32J",
+                     program_account_addr,
+                     fd_solana_vote_program_id.key) );
+    return -1;
+  } else {
+    fd_vote_instruction_t vote_instr = { 0 };
+    ushort instr_data_sz = parsed_txn->instr[0].data_sz;
+    uchar* instr_data = txn_buf + parsed_txn->instr[0].data_off;
+    fd_bincode_decode_ctx_t decode = {
+      .data    = instr_data,
+      .dataend = instr_data + instr_data_sz,
+      .valloc = valloc
+    };
+    int decode_result = fd_vote_instruction_decode( &vote_instr, &decode );
+    if( decode_result != FD_BINCODE_SUCCESS) {
+      FD_LOG_WARNING(("fd_vote_txn_parse: fail at decoding vote instruction"));
+      return -1;
+    } else {
+      if (vote_instr.discriminant != fd_vote_instruction_enum_update_vote_state) {
+        FD_LOG_WARNING(("fd_vote_txn_parse: not update_vote_state instruction"));
+        return -1;
+      } else {
+        *out_vote_update = vote_instr.inner.update_vote_state;
+      }
+    }
+  }
+ return 0;
 }

@@ -12,7 +12,12 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
                      uchar* vote_acct_privkey,
                      uchar* vote_auth_privkey,
                      uchar out_txn_meta_buf [static FD_TXN_MAX_SZ],
-                     uchar out_txn_buf [static FD_TXN_MTU]
-                     );
+                     uchar out_txn_buf [static FD_TXN_MTU]);
+
+int
+fd_vote_txn_parse(uchar txn_buf [static FD_TXN_MTU],
+                  ulong txn_size,
+                  fd_valloc_t valloc,
+                  fd_vote_state_update_t *out_vote_update);
 
 #endif

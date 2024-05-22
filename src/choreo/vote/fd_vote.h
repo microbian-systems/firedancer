@@ -2,14 +2,17 @@
 #define HEADER_fd_src_choreo_vote_fd_vote_h
 
 #include "../fd_choreo_base.h"
+#include "../../flamenco/txn/fd_txn_generate.h"
+#include "../../flamenco/runtime/fd_system_ids.h"
 
-int
-fd_vote_txn_generate(fd_pubkey_t *vote_acct_pubkey,
-                     uchar* vote_acct_privkey,
+ulong
+fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
+                     fd_pubkey_t *vote_acct_pubkey,
                      fd_pubkey_t *vote_auth_pubkey,
+                     uchar* vote_acct_privkey,
                      uchar* vote_auth_privkey,
                      uchar out_txn_meta_buf [static FD_TXN_MAX_SZ],
                      uchar out_txn_buf [static FD_TXN_MTU]
                      );
 
-#endif // FD_VOTE_H_
+#endif

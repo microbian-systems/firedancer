@@ -893,26 +893,6 @@ fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
   void * _bin = fd_valloc_malloc( valloc, 8UL, elf_sz );
   fd_memcpy( _bin, input->elf.data->bytes, elf_sz );
 
-  if( FD_UNLIKELY( !fd_sbpf_elf_peek( &info, _bin, elf_sz ) ) ) {
-    return 0UL;
-  }
-  
-
-  void* rodata = fd_valloc_malloc( valloc, 8UL, info.rodata_footprint );
-  FD_TEST( rodata );
-
-  fd_sbpf_program_t * prog = fd_sbpf_program_new( fd_valloc_malloc( valloc, fd_sbpf_program_align(), fd_sbpf_program_footprint( &info ) ), &info, rodata );
-  FD_TEST( prog );
-
-  fd_sbpf_syscalls_t * syscalls = fd_sbpf_syscalls_new( fd_valloc_malloc( valloc, fd_sbpf_syscalls_align(), fd_sbpf_syscalls_footprint() ));
-
-  fd_vm_syscall_register_all( syscalls );
-
-  int res = fd_sbpf_program_load( prog, _bin, elf_sz, syscalls );
-  if( FD_UNLIKELY( res ) ) {
-    return 0UL;
-  }
-
   // Allocate space for captured effects
   ulong output_end = (ulong)output_buf + output_bufsz;
   FD_SCRATCH_ALLOC_INIT( l, output_buf );
@@ -921,33 +901,64 @@ fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
     FD_SCRATCH_ALLOC_APPEND( l, alignof(fd_exec_test_elf_loader_effects_t),
                                 sizeof (fd_exec_test_elf_loader_effects_t) );
   if( FD_UNLIKELY( _l > output_end ) ) {
+    /* return 0 on fuzz-specific failures */
     return 0UL;
   }
-
   fd_memset( elf_effects, 0, sizeof(fd_exec_test_elf_loader_effects_t) );
-  elf_effects->rodata_sz = prog->rodata_sz;
 
-  // Load rodata section
-  elf_effects->rodata = FD_SCRATCH_ALLOC_APPEND(l, 8UL, PB_BYTES_ARRAY_T_ALLOCSIZE( prog->rodata_sz ));
-  elf_effects->rodata->size = (pb_size_t) prog->rodata_sz;
-  fd_memcpy( &(elf_effects->rodata->bytes), prog->rodata, prog->rodata_sz );
+  do{
 
-  elf_effects->text_cnt = prog->text_cnt;
-  elf_effects->text_off = prog->text_off;
+    if( FD_UNLIKELY( !fd_sbpf_elf_peek( &info, _bin, elf_sz ) ) ) {
+      /* return incomplete effects on execution failures */
+      break;
+    }
 
-  elf_effects->entry_pc = prog->entry_pc;
+    void* rodata = fd_valloc_malloc( valloc, 8UL, info.rodata_footprint );
+    FD_TEST( rodata );
+
+    fd_sbpf_program_t * prog = fd_sbpf_program_new( fd_valloc_malloc( valloc, fd_sbpf_program_align(), fd_sbpf_program_footprint( &info ) ), &info, rodata );
+    FD_TEST( prog );
+
+    fd_sbpf_syscalls_t * syscalls = fd_sbpf_syscalls_new( fd_valloc_malloc( valloc, fd_sbpf_syscalls_align(), fd_sbpf_syscalls_footprint() ));
+
+    fd_vm_syscall_register_all( syscalls );
+
+    int res = fd_sbpf_program_load( prog, _bin, elf_sz, syscalls );
+    if( FD_UNLIKELY( res ) ) {
+      break;
+    }
+
+    fd_memset( elf_effects, 0, sizeof(fd_exec_test_elf_loader_effects_t) );
+    elf_effects->rodata_sz = prog->rodata_sz;
+
+    // Load rodata section
+    elf_effects->rodata = FD_SCRATCH_ALLOC_APPEND(l, 8UL, PB_BYTES_ARRAY_T_ALLOCSIZE( prog->rodata_sz ));
+    if( FD_UNLIKELY( _l > output_end ) ) {
+      return 0UL;
+    }
+    elf_effects->rodata->size = (pb_size_t) prog->rodata_sz;
+    fd_memcpy( &(elf_effects->rodata->bytes), prog->rodata, prog->rodata_sz );
+
+    elf_effects->text_cnt = prog->text_cnt;
+    elf_effects->text_off = prog->text_off;
+
+    elf_effects->entry_pc = prog->entry_pc;
 
 
-  pb_size_t calldests_sz = (pb_size_t) fd_sbpf_calldests_cnt( prog->calldests);
-  elf_effects->calldests_count = calldests_sz;
-  elf_effects->calldests = FD_SCRATCH_ALLOC_APPEND(l, 8UL, calldests_sz * sizeof(uint64_t));
+    pb_size_t calldests_sz = (pb_size_t) fd_sbpf_calldests_cnt( prog->calldests);
+    elf_effects->calldests_count = calldests_sz;
+    elf_effects->calldests = FD_SCRATCH_ALLOC_APPEND(l, 8UL, calldests_sz * sizeof(uint64_t));
+    if( FD_UNLIKELY( _l > output_end ) ) {
+      return 0UL;
+    }
 
-  ulong i = 0;
-  for(ulong target_pc = fd_sbpf_calldests_const_iter_init(prog->calldests); !fd_sbpf_calldests_const_iter_done(target_pc);
-  target_pc = fd_sbpf_calldests_const_iter_next(prog->calldests, target_pc)) {
-    elf_effects->calldests[i] = target_pc;
-    ++i;
-  }
+    ulong i = 0;
+    for(ulong target_pc = fd_sbpf_calldests_const_iter_init(prog->calldests); !fd_sbpf_calldests_const_iter_done(target_pc);
+    target_pc = fd_sbpf_calldests_const_iter_next(prog->calldests, target_pc)) {
+      elf_effects->calldests[i] = target_pc;
+      ++i;
+    }
+  } while(0);
 
   ulong actual_end = FD_SCRATCH_ALLOC_FINI( l, 1UL );
 

@@ -481,16 +481,16 @@ during_housekeeping( void * _ctx ) {
 static void
 acc_mgr_saved( fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg ) {
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)arg;
-  fd_replay_notif_msg_t msg;
-  msg.type = FD_REPLAY_SAVED_TYPE;
-  msg.acct_saved.acct_id = *pubkey;
-  msg.acct_saved.funk_xid = txn->xid;
   void * dst_notif = fd_chunk_to_laddr( ctx->notif_out_mem, ctx->notif_out_chunk );
-  fd_memcpy( dst_notif, &msg, sizeof(msg) );
+  fd_replay_notif_msg_t * msg = (fd_replay_notif_msg_t *)dst_notif;;
+  msg->type = FD_REPLAY_SAVED_TYPE;
+  msg->acct_saved.acct_id = *pubkey;
+  msg->acct_saved.funk_xid = txn->xid;
   fd_mcache_publish( ctx->notif_out_mcache, ctx->notif_out_depth, ctx->notif_out_seq, 0UL, ctx->notif_out_chunk,
-                     sizeof(msg), 0UL, 0UL, 0UL );
+                     sizeof(fd_replay_notif_msg_t), 0UL, 0UL, 0UL );
   ctx->notif_out_seq   = fd_seq_inc( ctx->notif_out_seq, 1UL );
-  ctx->notif_out_chunk = fd_dcache_compact_next( ctx->notif_out_chunk, sizeof(msg), ctx->notif_out_chunk0, ctx->notif_out_wmark );
+  ctx->notif_out_chunk = fd_dcache_compact_next( ctx->notif_out_chunk, sizeof(fd_replay_notif_msg_t),
+                                                 ctx->notif_out_chunk0, ctx->notif_out_wmark );
 }
 
 static void

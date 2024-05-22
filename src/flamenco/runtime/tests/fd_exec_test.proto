@@ -114,7 +114,7 @@ message InstrFixture {
 
 message ELFBinary {
     bytes data = 1
-        [(nanopb).type = FT_POINTER];
+        [(nanopb).type = FT_POINTER]; 
 }
 
 message ELFLoaderCtx {
@@ -138,5 +138,9 @@ message ELFLoaderEffects {
 
      repeated uint64 calldests = 7
         [(nanopb).type = FT_POINTER];
-    // TODO: add more fields
+}
+
+message ELFLoaderFixture {
+    ELFLoaderCtx input = 1;
+    ELFLoaderEffects output = 2;
 }

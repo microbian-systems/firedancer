@@ -141,8 +141,15 @@ typedef struct fd_exec_test_elf_loader_effects {
     /* program entry point */
     uint64_t entry_pc;
     pb_size_t calldests_count;
-    uint64_t *calldests; /* TODO: add more fields */
+    uint64_t *calldests;
 } fd_exec_test_elf_loader_effects_t;
+
+typedef struct fd_exec_test_elf_loader_fixture {
+    bool has_input;
+    fd_exec_test_elf_loader_ctx_t input;
+    bool has_output;
+    fd_exec_test_elf_loader_effects_t output;
+} fd_exec_test_elf_loader_fixture_t;
 
 
 #ifdef __cplusplus
@@ -162,6 +169,7 @@ extern "C" {
 #define FD_EXEC_TEST_ELF_BINARY_INIT_DEFAULT     {NULL}
 #define FD_EXEC_TEST_ELF_LOADER_CTX_INIT_DEFAULT {false, FD_EXEC_TEST_ELF_BINARY_INIT_DEFAULT, false, FD_EXEC_TEST_FEATURE_SET_INIT_DEFAULT}
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT {NULL, 0, 0, 0, 0, 0, NULL}
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_INIT_DEFAULT {false, FD_EXEC_TEST_ELF_LOADER_CTX_INIT_DEFAULT, false, FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT}
 #define FD_EXEC_TEST_FEATURE_SET_INIT_ZERO       {0, NULL}
 #define FD_EXEC_TEST_ACCT_STATE_INIT_ZERO        {false, {0}, false, 0, NULL, false, 0, false, 0, false, {0}}
 #define FD_EXEC_TEST_EPOCH_CONTEXT_INIT_ZERO     {false, FD_EXEC_TEST_FEATURE_SET_INIT_ZERO}
@@ -174,6 +182,7 @@ extern "C" {
 #define FD_EXEC_TEST_ELF_BINARY_INIT_ZERO        {NULL}
 #define FD_EXEC_TEST_ELF_LOADER_CTX_INIT_ZERO    {false, FD_EXEC_TEST_ELF_BINARY_INIT_ZERO, false, FD_EXEC_TEST_FEATURE_SET_INIT_ZERO}
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO {NULL, 0, 0, 0, 0, 0, NULL}
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_INIT_ZERO {false, FD_EXEC_TEST_ELF_LOADER_CTX_INIT_ZERO, false, FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define FD_EXEC_TEST_FEATURE_SET_FEATURES_TAG    1
@@ -211,6 +220,8 @@ extern "C" {
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_TEXT_OFF_TAG 5
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_ENTRY_PC_TAG 6
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_CALLDESTS_TAG 7
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_INPUT_TAG 1
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_OUTPUT_TAG 2
 
 /* Struct field encoding specification for nanopb */
 #define FD_EXEC_TEST_FEATURE_SET_FIELDLIST(X, a) \
@@ -309,6 +320,14 @@ X(a, POINTER,  REPEATED, UINT64,   calldests,         7)
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_CALLBACK NULL
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_DEFAULT NULL
 
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_FIELDLIST(X, a) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  input,             1) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  output,            2)
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_CALLBACK NULL
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_DEFAULT NULL
+#define fd_exec_test_elf_loader_fixture_t_input_MSGTYPE fd_exec_test_elf_loader_ctx_t
+#define fd_exec_test_elf_loader_fixture_t_output_MSGTYPE fd_exec_test_elf_loader_effects_t
+
 extern const pb_msgdesc_t fd_exec_test_feature_set_t_msg;
 extern const pb_msgdesc_t fd_exec_test_acct_state_t_msg;
 extern const pb_msgdesc_t fd_exec_test_epoch_context_t_msg;
@@ -321,6 +340,7 @@ extern const pb_msgdesc_t fd_exec_test_instr_fixture_t_msg;
 extern const pb_msgdesc_t fd_exec_test_elf_binary_t_msg;
 extern const pb_msgdesc_t fd_exec_test_elf_loader_ctx_t_msg;
 extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
+extern const pb_msgdesc_t fd_exec_test_elf_loader_fixture_t_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define FD_EXEC_TEST_FEATURE_SET_FIELDS &fd_exec_test_feature_set_t_msg
@@ -335,6 +355,7 @@ extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
 #define FD_EXEC_TEST_ELF_BINARY_FIELDS &fd_exec_test_elf_binary_t_msg
 #define FD_EXEC_TEST_ELF_LOADER_CTX_FIELDS &fd_exec_test_elf_loader_ctx_t_msg
 #define FD_EXEC_TEST_ELF_LOADER_EFFECTS_FIELDS &fd_exec_test_elf_loader_effects_t_msg
+#define FD_EXEC_TEST_ELF_LOADER_FIXTURE_FIELDS &fd_exec_test_elf_loader_fixture_t_msg
 
 /* Maximum encoded size of messages (where known) */
 /* fd_exec_test_FeatureSet_size depends on runtime parameters */
@@ -346,6 +367,7 @@ extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
 /* fd_exec_test_ELFBinary_size depends on runtime parameters */
 /* fd_exec_test_ELFLoaderCtx_size depends on runtime parameters */
 /* fd_exec_test_ELFLoaderEffects_size depends on runtime parameters */
+/* fd_exec_test_ELFLoaderFixture_size depends on runtime parameters */
 #define FD_EXEC_TEST_INSTR_ACCT_SIZE             10
 #define FD_EXEC_TEST_SLOT_CONTEXT_SIZE           0
 #define FD_EXEC_TEST_TXN_CONTEXT_SIZE            0
@@ -364,6 +386,7 @@ extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
 #define org_solana_sealevel_v1_ELFBinary fd_exec_test_ELFBinary
 #define org_solana_sealevel_v1_ELFLoaderCtx fd_exec_test_ELFLoaderCtx
 #define org_solana_sealevel_v1_ELFLoaderEffects fd_exec_test_ELFLoaderEffects
+#define org_solana_sealevel_v1_ELFLoaderFixture fd_exec_test_ELFLoaderFixture
 #define ORG_SOLANA_SEALEVEL_V1_FEATURE_SET_INIT_DEFAULT FD_EXEC_TEST_FEATURE_SET_INIT_DEFAULT
 #define ORG_SOLANA_SEALEVEL_V1_ACCT_STATE_INIT_DEFAULT FD_EXEC_TEST_ACCT_STATE_INIT_DEFAULT
 #define ORG_SOLANA_SEALEVEL_V1_EPOCH_CONTEXT_INIT_DEFAULT FD_EXEC_TEST_EPOCH_CONTEXT_INIT_DEFAULT
@@ -376,6 +399,7 @@ extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
 #define ORG_SOLANA_SEALEVEL_V1_ELF_BINARY_INIT_DEFAULT FD_EXEC_TEST_ELF_BINARY_INIT_DEFAULT
 #define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_CTX_INIT_DEFAULT FD_EXEC_TEST_ELF_LOADER_CTX_INIT_DEFAULT
 #define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_EFFECTS_INIT_DEFAULT FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_DEFAULT
+#define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_FIXTURE_INIT_DEFAULT FD_EXEC_TEST_ELF_LOADER_FIXTURE_INIT_DEFAULT
 #define ORG_SOLANA_SEALEVEL_V1_FEATURE_SET_INIT_ZERO FD_EXEC_TEST_FEATURE_SET_INIT_ZERO
 #define ORG_SOLANA_SEALEVEL_V1_ACCT_STATE_INIT_ZERO FD_EXEC_TEST_ACCT_STATE_INIT_ZERO
 #define ORG_SOLANA_SEALEVEL_V1_EPOCH_CONTEXT_INIT_ZERO FD_EXEC_TEST_EPOCH_CONTEXT_INIT_ZERO
@@ -388,6 +412,7 @@ extern const pb_msgdesc_t fd_exec_test_elf_loader_effects_t_msg;
 #define ORG_SOLANA_SEALEVEL_V1_ELF_BINARY_INIT_ZERO FD_EXEC_TEST_ELF_BINARY_INIT_ZERO
 #define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_CTX_INIT_ZERO FD_EXEC_TEST_ELF_LOADER_CTX_INIT_ZERO
 #define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_EFFECTS_INIT_ZERO FD_EXEC_TEST_ELF_LOADER_EFFECTS_INIT_ZERO
+#define ORG_SOLANA_SEALEVEL_V1_ELF_LOADER_FIXTURE_INIT_ZERO FD_EXEC_TEST_ELF_LOADER_FIXTURE_INIT_ZERO
 
 #ifdef __cplusplus
 } /* extern "C" */

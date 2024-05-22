@@ -5,8 +5,8 @@
 struct __attribute__((aligned(64UL))) fd_replay_notif_msg {
   union {
     struct {
-      fd_pubkey_t acct_id;
-      fd_hash_t funk_xid;
+      fd_pubkey_t       acct_id;
+      fd_funk_txn_xid_t funk_xid;
     } acct_saved;
   };
   uint type;

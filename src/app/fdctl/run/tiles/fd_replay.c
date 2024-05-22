@@ -65,6 +65,11 @@ struct fd_replay_tile_ctx {
   ulong       poh_out_chunk;
 
   // Notification output defs
+  fd_frag_meta_t * notif_out_mcache;
+  ulong *          notif_out_sync;
+  ulong            notif_out_depth;
+  ulong            notif_out_seq;
+
   fd_wksp_t * notif_out_mem;
   ulong       notif_out_chunk0;
   ulong       notif_out_wmark;
@@ -471,7 +476,21 @@ static void
 during_housekeeping( void * _ctx ) {
   fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)_ctx;
   (void)ctx;
-  // fd_mcache_seq_update( ctx->poh_out_sync, ctx->poh_out_seq );
+}
+
+static void
+acc_mgr_saved( fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg ) {
+  fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)arg;
+  fd_replay_notif_msg_t msg;
+  msg.type = FD_REPLAY_SAVED_TYPE;
+  msg.acct_saved.acct_id = *pubkey;
+  msg.acct_saved.funk_xid = txn->xid;
+  void * dst_notif = fd_chunk_to_laddr( ctx->notif_out_mem, ctx->notif_out_chunk );
+  fd_memcpy( dst_notif, &msg, sizeof(msg) );
+  fd_mcache_publish( ctx->notif_out_mcache, ctx->notif_out_depth, ctx->notif_out_seq, 0UL, ctx->notif_out_chunk,
+                     sizeof(msg), 0UL, 0UL, 0UL );
+  ctx->notif_out_seq   = fd_seq_inc( ctx->notif_out_seq, 1UL );
+  ctx->notif_out_chunk = fd_dcache_compact_next( ctx->notif_out_chunk, sizeof(msg), ctx->notif_out_chunk0, ctx->notif_out_wmark );
 }
 
 static void
@@ -587,6 +606,8 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->replay->epoch_ctx    = ctx->epoch_ctx;
 
   fd_acc_mgr_t * acc_mgr = fd_acc_mgr_new( ctx->acc_mgr, funk );
+  acc_mgr->saved_fun     = acc_mgr_saved;
+  acc_mgr->saved_fun_arg = ctx;
 
   fd_forks_t * forks     = fd_forks_join( fd_forks_new( forks_mem, FORKS_MAX, 42UL ) );
   FD_TEST( forks );
@@ -651,10 +672,14 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->poh_out_wmark  = fd_dcache_compact_wmark( ctx->poh_out_mem, poh_out_link->dcache, poh_out_link->mtu );
   ctx->poh_out_chunk  = ctx->poh_out_chunk0;
 
-  fd_topo_link_t * notif_out_link = &topo->links[ tile->out_link_id[ NOTIF_OUT_IDX ] ];
-  ctx->notif_out_mem    = topo->workspaces[ topo->objs[ notif_out_link->dcache_obj_id ].wksp_id ].wksp;
-  ctx->notif_out_chunk0 = fd_dcache_compact_chunk0( ctx->notif_out_mem, notif_out_link->dcache );
-  ctx->notif_out_wmark  = fd_dcache_compact_wmark( ctx->notif_out_mem, notif_out_link->dcache, notif_out_link->mtu );
+  fd_topo_link_t * notif_out = &topo->links[ tile->out_link_id[ NOTIF_OUT_IDX ] ];
+  ctx->notif_out_mcache = notif_out->mcache;
+  ctx->notif_out_sync   = fd_mcache_seq_laddr( ctx->notif_out_mcache );
+  ctx->notif_out_depth  = fd_mcache_depth( ctx->notif_out_mcache );
+  ctx->notif_out_seq    = fd_mcache_seq_query( ctx->notif_out_sync );
+  ctx->notif_out_mem    = topo->workspaces[ topo->objs[ notif_out->dcache_obj_id ].wksp_id ].wksp;
+  ctx->notif_out_chunk0 = fd_dcache_compact_chunk0( ctx->notif_out_mem, notif_out->dcache );
+  ctx->notif_out_wmark  = fd_dcache_compact_wmark ( ctx->notif_out_mem, notif_out->dcache, notif_out->mtu );
   ctx->notif_out_chunk  = ctx->notif_out_chunk0;
 
   /* Set up stake weights tile output */

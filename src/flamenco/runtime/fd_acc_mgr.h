@@ -22,7 +22,7 @@
 #define FD_ACC_SZ_MAX (10UL<<20) /* 10MiB */
 
 /* Notification function which is called whenever an account is saved */
-typedef void (*fd_acc_saved_fun)(fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg);
+typedef void (*fd_acc_saved_fun)( fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg );
 
 /* fd_acc_mgr_t translates between the runtime account DB abstraction
    and the actual funk database.  Also manages rent collection.

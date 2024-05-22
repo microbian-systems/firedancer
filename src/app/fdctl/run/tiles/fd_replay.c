@@ -468,6 +468,7 @@ after_credit( void *             _ctx,
     fd_mcache_publish(ctx->poh_out_mcache, ctx->poh_out_depth, ctx->poh_out_seq, sig, ctx->poh_out_chunk, sizeof(fd_poh_init_msg_t), 0UL, tsorig, 0UL);
     ctx->poh_out_chunk = fd_dcache_compact_next(ctx->poh_out_chunk, sizeof(fd_poh_init_msg_t), ctx->poh_out_chunk0, ctx->poh_out_wmark);
     ctx->poh_out_seq = fd_seq_inc(ctx->poh_out_seq, 1UL);
+    ctx->poh_init_done = 1;
   }
 
   long now = fd_log_wallclock();

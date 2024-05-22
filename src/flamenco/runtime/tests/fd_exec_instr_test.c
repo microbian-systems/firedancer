@@ -871,15 +871,32 @@ fd_sbpf_program_load_test_run( fd_exec_test_elf_loader_ctx_t const * input,
                                void *                               output_buf,
                                ulong                                output_bufsz ){
   fd_sbpf_elf_info_t info;
+  fd_valloc_t valloc = fd_scratch_virtual();
+
   if ( FD_UNLIKELY( !input->has_elf || !input->elf.data ) ){
     return 0UL;
   }
-  void const * _bin = input->elf.data->bytes;
+
+  /* Nanopb's pb_bytes_array adds a 4-byte "size" field to the ELF binary,
+    which causes the actual binary data to be misaligned when it is passed
+    to the ELF loader.
+
+    As a temporary workaround, the entire binary is copied to an 8-byte aligned 
+    region of memory. This ensures that the binary data starts at an 8-byte aligned
+    address, satisfying the alignment requirements of the ELF loader.
+
+    TODO: The permanent solution would involve using a different Nanopb type to 
+    store the ELF binary data (e.g., a callback type or a fixed-length type) that 
+    does not interfere with alignment. 
+  */
   ulong elf_sz = input->elf.data->size;
+  void * _bin = fd_valloc_malloc( valloc, 8UL, elf_sz );
+  fd_memcpy( _bin, input->elf.data->bytes, elf_sz );
+
   if( FD_UNLIKELY( !fd_sbpf_elf_peek( &info, _bin, elf_sz ) ) ) {
     return 0UL;
   }
-  fd_valloc_t valloc = fd_scratch_virtual();
+  
 
   void* rodata = fd_valloc_malloc( valloc, 8UL, info.rodata_footprint );
   FD_TEST( rodata );

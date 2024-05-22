@@ -21,6 +21,9 @@
 
 #define FD_ACC_SZ_MAX (10UL<<20) /* 10MiB */
 
+/* Notification function which is called whenever an account is saved */
+typedef void (*fd_acc_saved_fun)(fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg);
+
 /* fd_acc_mgr_t translates between the runtime account DB abstraction
    and the actual funk database.  Also manages rent collection.
    fd_acc_mgr_t cannot be relocated to another address space.
@@ -36,6 +39,11 @@
 
 struct __attribute__((aligned(16UL))) fd_acc_mgr {
   fd_funk_t * funk;
+
+  /* Notification function which is called whenever an account is
+     saved to funk. Ignored if NULL. */
+  fd_acc_saved_fun saved_fun;
+  void * saved_fun_arg;
 
   ulong slots_per_epoch;  /* see epoch schedule.  do not update directly */
 

@@ -272,6 +272,24 @@ after_frag( void *             _ctx,
         return;
       }
 
+      // Notify for all the updated accounts
+      for( fd_funk_rec_t const * rec = fd_funk_txn_first_rec( ctx->replay->funk, fork->slot_ctx.funk_txn );
+           rec != NULL;
+           rec = fd_funk_txn_next_rec( ctx->replay->funk, rec ) ) {
+        if( fd_funk_key_is_acc( rec->pair.key ) ) {
+          void * dst_notif = fd_chunk_to_laddr( ctx->notif_out_mem, ctx->notif_out_chunk );
+          fd_replay_notif_msg_t * msg = (fd_replay_notif_msg_t *)dst_notif;
+          msg->type = FD_REPLAY_SAVED_TYPE;
+          fd_memcpy( msg->acct_saved.acct_id.uc, rec->pair.key->uc, sizeof(fd_pubkey_t) );
+          msg->acct_saved.funk_xid = rec->pair.xid[0];
+          fd_mcache_publish( ctx->notif_out_mcache, ctx->notif_out_depth, ctx->notif_out_seq, 0UL, ctx->notif_out_chunk,
+                             sizeof(fd_replay_notif_msg_t), 0UL, 0UL, 0UL );
+          ctx->notif_out_seq   = fd_seq_inc( ctx->notif_out_seq, 1UL );
+          ctx->notif_out_chunk = fd_dcache_compact_next( ctx->notif_out_chunk, sizeof(fd_replay_notif_msg_t),
+                                                         ctx->notif_out_chunk0, ctx->notif_out_wmark );
+        }
+      }
+
       fd_blockstore_start_write( ctx->replay->blockstore );
 
       fd_block_t * block_ = fd_blockstore_block_query( ctx->replay->blockstore, ctx->curr_slot );
@@ -481,21 +499,6 @@ during_housekeeping( void * _ctx ) {
 }
 
 static void
-acc_mgr_saved( fd_pubkey_t const * pubkey, fd_funk_txn_t const * txn, void * arg ) {
-  fd_replay_tile_ctx_t * ctx = (fd_replay_tile_ctx_t *)arg;
-  void * dst_notif = fd_chunk_to_laddr( ctx->notif_out_mem, ctx->notif_out_chunk );
-  fd_replay_notif_msg_t * msg = (fd_replay_notif_msg_t *)dst_notif;
-  msg->type = FD_REPLAY_SAVED_TYPE;
-  msg->acct_saved.acct_id = *pubkey;
-  msg->acct_saved.funk_xid = txn->xid;
-  fd_mcache_publish( ctx->notif_out_mcache, ctx->notif_out_depth, ctx->notif_out_seq, 0UL, ctx->notif_out_chunk,
-                     sizeof(fd_replay_notif_msg_t), 0UL, 0UL, 0UL );
-  ctx->notif_out_seq   = fd_seq_inc( ctx->notif_out_seq, 1UL );
-  ctx->notif_out_chunk = fd_dcache_compact_next( ctx->notif_out_chunk, sizeof(fd_replay_notif_msg_t),
-                                                 ctx->notif_out_chunk0, ctx->notif_out_wmark );
-}
-
-static void
 privileged_init( fd_topo_t *      topo    FD_PARAM_UNUSED,
                  fd_topo_tile_t * tile    FD_PARAM_UNUSED,
                  void *           scratch ) {
@@ -610,8 +613,6 @@ unprivileged_init( fd_topo_t *      topo,
   ctx->replay->epoch_ctx    = ctx->epoch_ctx;
 
   fd_acc_mgr_t * acc_mgr = fd_acc_mgr_new( ctx->acc_mgr, funk );
-  acc_mgr->saved_fun     = acc_mgr_saved;
-  acc_mgr->saved_fun_arg = ctx;
 
   fd_forks_t * forks     = fd_forks_join( fd_forks_new( forks_mem, FORKS_MAX, 42UL ) );
   FD_TEST( forks );

@@ -317,12 +317,7 @@ fd_acc_mgr_save_non_tpool( fd_acc_mgr_t *          acc_mgr,
   if( fd_funk_val_truncate( account->rec, reclen, fd_funk_alloc( acc_mgr->funk, wksp ), wksp, &err ) == NULL ) {
     FD_LOG_ERR(( "unable to allocate account value, err %d", err ));
   }
-  err = fd_acc_mgr_save( acc_mgr, account );
-  fd_acc_saved_fun saved_fun = acc_mgr->saved_fun;
-  if( saved_fun != NULL ) {
-    (*saved_fun)( account->pubkey, txn, acc_mgr->saved_fun_arg );
-  }
-  return err;
+  return fd_acc_mgr_save( acc_mgr, account );
 }
 
 void
@@ -414,7 +409,7 @@ fd_acc_mgr_save_many_tpool( fd_acc_mgr_t *          acc_mgr,
     }
 
     fd_funk_start_write( funk );
-
+    
     for( ulong i = 0; i < accounts_cnt; i++ ) {
       fd_borrowed_account_t * account = accounts[i];
       ulong batch_idx = i & batch_mask;
@@ -445,13 +440,6 @@ fd_acc_mgr_save_many_tpool( fd_acc_mgr_t *          acc_mgr,
     fd_tpool_exec_all_taskq( tpool, 0, max_workers, fd_acc_mgr_save_task, task_infos, &task_args, NULL, 1, 0, batch_cnt );
 
     fd_funk_end_write( funk );
-
-    fd_acc_saved_fun saved_fun = acc_mgr->saved_fun;
-    if( saved_fun != NULL ) {
-      for( ulong i = 0; i < accounts_cnt; i++ ) {
-        (*saved_fun)( accounts[i]->pubkey, txn, acc_mgr->saved_fun_arg );
-      }
-    }
 
     /* Check results */
     for( ulong i = 0; i < batch_cnt; i++ ) {

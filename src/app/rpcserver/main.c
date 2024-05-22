@@ -2,6 +2,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <unistd.h>
+#include "../../util/wksp/fd_wksp_private.h"
+#include "../../disco/topo/fd_topo.h"
 #include "fd_rpc_service.h"
 
 /*
@@ -9,6 +11,7 @@ static void usage( char const * progname ) {
   fprintf( stderr, "fd_rpcserver usage: %s\n", progname );
   fprintf( stderr, " --wksp-name-funk <workspace name>          funk workspace name\n" );
   fprintf( stderr, " --wksp-name-blockstore <workspace name>    blockstore workspace name\n" );
+  fprintf( stderr, " --wksp-name-replay-notify <workspace name> replay notification workspace name\n" );
   fprintf( stderr, " --num-threads <count>                      number of http service threads\n" );
   fprintf( stderr, " --port <port number>                       http service port\n" );
 }
@@ -49,6 +52,17 @@ init_args( int * argc, char *** argv, fd_rpcserver_args_t * args ) {
   }
   FD_LOG_NOTICE(( "blockstore has slot min=%lu smr=%lu max=%lu",
                   args->blockstore->min, args->blockstore->smr, args->blockstore->max ));
+
+  wksp_name = fd_env_strip_cmdline_cstr ( argc, argv, "--wksp-name-replay-notify", NULL, "fd1_replay_notif.wksp" );
+  FD_LOG_NOTICE(( "attaching to workspace \"%s\"", wksp_name ));
+  wksp = fd_wksp_attach( wksp_name );
+  if( FD_UNLIKELY( !wksp ) )
+    FD_LOG_ERR(( "unable to attach to \"%s\"\n\tprobably does not exist or bad permissions", wksp_name ));
+  ulong offset = fd_ulong_align_up( fd_wksp_private_data_off( wksp->part_max ), fd_topo_workspace_align() );
+  args->rep_notify = fd_mcache_join( (void *)((ulong)wksp + offset) );
+  if( args->rep_notify == NULL ) {
+    FD_LOG_ERR(( "failed to join a replay notifier" ));
+  }
 
   args->num_threads = fd_env_strip_cmdline_ulong( argc, argv, "--num-threads", NULL, 10 );
 

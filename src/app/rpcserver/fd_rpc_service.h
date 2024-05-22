@@ -4,10 +4,12 @@
 #include "../../util/fd_util.h"
 #include "../../funk/fd_funk.h"
 #include "../../flamenco/runtime/fd_blockstore.h"
+#include "../../tango/mcache/fd_mcache.h"
 
 struct fd_rpcserver_args {
   fd_funk_t *       funk;
   fd_blockstore_t * blockstore;
+  fd_frag_meta_t *  rep_notify;
   ulong             num_threads;
   ushort            port;
 };

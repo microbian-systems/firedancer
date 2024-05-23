@@ -6,11 +6,12 @@
 #include "../../flamenco/runtime/fd_system_ids.h"
 
 ulong
-fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
+fd_vote_txn_generate(fd_compact_vote_state_update_t *vote_update,
                      fd_pubkey_t *vote_acct_pubkey,
                      fd_pubkey_t *vote_auth_pubkey,
                      uchar* vote_acct_privkey,
                      uchar* vote_auth_privkey,
+                     uchar* recent_blockhash,
                      uchar out_txn_meta_buf [static FD_TXN_MAX_SZ],
                      uchar out_txn_buf [static FD_TXN_MTU]);
 
@@ -18,6 +19,6 @@ int
 fd_vote_txn_parse(uchar txn_buf [static FD_TXN_MTU],
                   ulong txn_size,
                   fd_valloc_t valloc,
-                  fd_vote_state_update_t *out_vote_update);
+                  fd_compact_vote_state_update_t *out_vote_update);
 
 #endif

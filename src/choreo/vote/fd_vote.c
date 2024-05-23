@@ -4,11 +4,12 @@
 #pragma GCC diagnostic ignored "-Wformat-extra-args"
 
 ulong
-fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
+fd_vote_txn_generate(fd_compact_vote_state_update_t *compact_vote_update,
                      fd_pubkey_t *vote_acct_pubkey,
                      fd_pubkey_t *vote_auth_pubkey,
                      uchar* vote_acct_privkey,
                      uchar* vote_auth_privkey,
+                     uchar* recent_blockhash,
                      uchar out_txn_meta_buf [static FD_TXN_MAX_SZ],
                      uchar out_txn_buf [static FD_TXN_MTU]
                      ) {
@@ -27,18 +28,18 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
   vote_txn_accounts.signers_r             = NULL;                 /* 0 pubkey */
   vote_txn_accounts.non_signers_w         = NULL;                 /* 0 pubkey */
   vote_txn_accounts.non_signers_r         = &vote_program_pubkey; /* 1 pubkey: vote program */
-  FD_TEST( fd_txn_base_generate( out_txn_meta_buf, out_txn_buf, 2, &vote_txn_accounts, NULL ) );
+  FD_TEST( fd_txn_base_generate( out_txn_meta_buf, out_txn_buf, 2, &vote_txn_accounts, recent_blockhash ) );
 
   /* Add the vote instruction */
   fd_vote_instruction_t vote_instr;
   uchar vote_instr_buf[FD_TXN_MTU];
-  vote_instr.discriminant = fd_vote_instruction_enum_update_vote_state;
-  vote_instr.inner.update_vote_state = *vote_update;
+  vote_instr.discriminant = fd_vote_instruction_enum_compact_update_vote_state;
+  vote_instr.inner.compact_update_vote_state = *compact_vote_update;
   fd_bincode_encode_ctx_t encode = { .data = vote_instr_buf, .dataend = (vote_instr_buf + FD_TXN_MTU) };
   fd_vote_instruction_encode ( &vote_instr, &encode );
   ushort vote_instr_size = (ushort)fd_vote_instruction_size( &vote_instr );
   uchar instr_accounts[2];
-  instr_accounts[0] = 0;
+  instr_accounts[0] = 1;
   instr_accounts[1] = 1;
   ulong txn_size = fd_txn_add_instr(out_txn_meta_buf, out_txn_buf, 2, instr_accounts, 2, vote_instr_buf, vote_instr_size);
 
@@ -65,7 +66,7 @@ int
 fd_vote_txn_parse(uchar txn_buf [static FD_TXN_MTU],
                   ulong txn_size,
                   fd_valloc_t valloc,
-                  fd_vote_state_update_t *out_vote_update){
+                  fd_compact_vote_state_update_t *out_compact_vote_update){
   uchar out_buf[ FD_TXN_MAX_SZ ];
   fd_txn_t * parsed_txn = (fd_txn_t *)fd_type_pun( out_buf );
   ulong out_sz = fd_txn_parse( txn_buf, txn_size, out_buf, NULL );
@@ -96,11 +97,11 @@ fd_vote_txn_parse(uchar txn_buf [static FD_TXN_MTU],
       FD_LOG_WARNING(("fd_vote_txn_parse: fail at decoding vote instruction"));
       return -1;
     } else {
-      if (vote_instr.discriminant != fd_vote_instruction_enum_update_vote_state) {
-        FD_LOG_WARNING(("fd_vote_txn_parse: not update_vote_state instruction"));
+      if (vote_instr.discriminant != fd_vote_instruction_enum_compact_update_vote_state) {
+        FD_LOG_WARNING(("fd_vote_txn_parse: not compact_update_vote_state instruction"));
         return -1;
       } else {
-        *out_vote_update = vote_instr.inner.update_vote_state;
+        *out_compact_vote_update = vote_instr.inner.compact_update_vote_state;
       }
     }
   }

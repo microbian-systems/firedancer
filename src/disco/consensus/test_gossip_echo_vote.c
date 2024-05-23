@@ -183,8 +183,7 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
           fd_vote_instruction_encode ( &vote_instr, &encode );
           FD_TEST( fd_vote_instruction_size( &vote_instr) == instr_data_sz );
 
-          #define SIGNATURE_SZ 64
-          uchar validator_sig[ SIGNATURE_SZ ], voter_sig[ SIGNATURE_SZ ];
+          uchar validator_sig[ FD_TXN_SIGNATURE_SZ ], voter_sig[ FD_TXN_SIGNATURE_SZ ];
           fd_sha512_t sha[2];
           fd_ed25519_sign( /* sig */ validator_sig,
                            /* msg */ vote->txn.raw + parsed_txn->message_off,
@@ -199,9 +198,9 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
                            /* private_key */ arg_->voter_keypair,//arg_->gossip_config->private_key,
                            &sha[0] );
           uchar* sign_addr = vote->txn.raw + parsed_txn->signature_off;
-          FD_LOG_WARNING(("Old signatures: %32J, %32J || New signatures: %32J, %32J", sign_addr, sign_addr + SIGNATURE_SZ, validator_sig, voter_sig));
-          memcpy(sign_addr, validator_sig, SIGNATURE_SZ);
-          memcpy(sign_addr + SIGNATURE_SZ, voter_sig, SIGNATURE_SZ);
+          FD_LOG_WARNING(("Old signatures: %32J, %32J || New signatures: %32J, %32J", sign_addr, sign_addr + FD_TXN_SIGNATURE_SZ, validator_sig, voter_sig));
+          memcpy(sign_addr, validator_sig, FD_TXN_SIGNATURE_SZ);
+          memcpy(sign_addr + FD_TXN_SIGNATURE_SZ, voter_sig, FD_TXN_SIGNATURE_SZ);
           fd_gossip_push_value( arg_->gossip, data, NULL );
 
           static ulong echo_cnt = 0;

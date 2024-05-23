@@ -5,18 +5,18 @@
 
 ulong
 fd_vote_txn_generate(fd_compact_vote_state_update_t *compact_vote_update,
+                     fd_pubkey_t *validator_pubkey,
                      fd_pubkey_t *vote_acct_pubkey,
-                     fd_pubkey_t *vote_auth_pubkey,
+                     uchar* validator_privkey,
                      uchar* vote_acct_privkey,
-                     uchar* vote_auth_privkey,
                      uchar* recent_blockhash,
                      uchar out_txn_meta_buf [static FD_TXN_MAX_SZ],
                      uchar out_txn_buf [static FD_TXN_MTU]
                      ) {
   /* Create the transaction base */
   fd_pubkey_t pubkeys[2], vote_program_pubkey;
-  memcpy( pubkeys, vote_acct_pubkey, sizeof(fd_pubkey_t) );
-  memcpy( pubkeys + 1, vote_auth_pubkey, sizeof(fd_pubkey_t) );
+  memcpy( pubkeys, validator_pubkey, sizeof(fd_pubkey_t) );
+  memcpy( pubkeys + 1, vote_acct_pubkey, sizeof(fd_pubkey_t) );
   memcpy( &vote_program_pubkey, &fd_solana_vote_program_id, sizeof(fd_pubkey_t) );
 
   fd_txn_accounts_t vote_txn_accounts;
@@ -49,14 +49,14 @@ fd_vote_txn_generate(fd_compact_vote_state_update_t *compact_vote_update,
   fd_ed25519_sign( /* sig */ out_txn_buf + txn_meta->signature_off,
                    /* msg */ out_txn_buf + txn_meta->message_off,
                    /* sz  */ txn_size - txn_meta->message_off,
-                   /* public_key  */ vote_acct_pubkey->key,
-                   /* private_key */ vote_acct_privkey,
+                   /* public_key  */ validator_pubkey->key,
+                   /* private_key */ validator_privkey,
                    &sha);
   fd_ed25519_sign( /* sig */ out_txn_buf + txn_meta->signature_off + FD_TXN_SIGNATURE_SZ,
                    /* msg */ out_txn_buf + txn_meta->message_off,
                    /* sz  */ txn_size - txn_meta->message_off,
-                   /* public_key  */ vote_auth_pubkey->key,
-                   /* private_key */ vote_auth_privkey,
+                   /* public_key  */ vote_acct_pubkey->key,
+                   /* private_key */ vote_acct_privkey,
                    &sha);
 
   return txn_size;

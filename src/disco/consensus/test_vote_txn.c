@@ -18,13 +18,13 @@ main( int argc, char ** argv ) {
 
   /* Keys */
   fd_sha512_t sha[2];
-  fd_pubkey_t vote_account_pubkey, vote_authority_pubkey;
-  uchar vote_account_privkey[32], vote_authority_privkey[32];
+  fd_pubkey_t vote_acct_pubkey, validator_pubkey;
+  uchar vote_acct_privkey[32], validator_privkey[32];
 
-  FD_TEST( 32UL == getrandom( vote_account_privkey, 32UL, 0 ) );
-  FD_TEST( 32UL == getrandom( vote_authority_privkey, 32UL, 0 ) );
-  FD_TEST( fd_ed25519_public_from_private( vote_account_pubkey.key, vote_account_privkey, &sha[0] ) );
-  FD_TEST( fd_ed25519_public_from_private( vote_authority_pubkey.key, vote_authority_privkey, &sha[1] ) );
+  FD_TEST( 32UL == getrandom( vote_acct_privkey, 32UL, 0 ) );
+  FD_TEST( 32UL == getrandom( validator_privkey, 32UL, 0 ) );
+  FD_TEST( fd_ed25519_public_from_private( vote_acct_pubkey.key, vote_acct_privkey, &sha[0] ) );
+  FD_TEST( fd_ed25519_public_from_private( validator_pubkey.key, validator_privkey, &sha[1] ) );
 
   /* Workspace */
   ulong page_cnt = 1;
@@ -53,7 +53,7 @@ main( int argc, char ** argv ) {
   /* Create the vote transaction */
   uchar txn_meta_buf[ FD_TXN_MAX_SZ ];
   uchar txn_buf [ FD_TXN_MTU ];
-  ulong txn_size = fd_vote_txn_generate( &compact_vote_update, &vote_account_pubkey, &vote_authority_pubkey, vote_account_privkey, vote_authority_privkey, NULL, txn_meta_buf, txn_buf);
+  ulong txn_size = fd_vote_txn_generate( &compact_vote_update, &validator_pubkey, &vote_acct_pubkey, validator_privkey, vote_acct_privkey, NULL, txn_meta_buf, txn_buf);
   FD_LOG_NOTICE(("fd_vote_txn_generate: vote txn has %lu bytes", txn_size));
 
   /* Parse the transaction back to fd_txn_t */

@@ -56,7 +56,7 @@ init_args( int * argc, char *** argv, fd_rpcserver_args_t * args ) {
 
   wksp_name = fd_env_strip_cmdline_cstr ( argc, argv, "--wksp-name-replay-notify", NULL, "fd1_replay_notif.wksp" );
   FD_LOG_NOTICE(( "attaching to workspace \"%s\"", wksp_name ));
-  wksp = fd_wksp_attach( wksp_name );
+  args->rep_notify_wksp = wksp = fd_wksp_attach( wksp_name );
   if( FD_UNLIKELY( !wksp ) )
     FD_LOG_ERR(( "unable to attach to \"%s\"\n\tprobably does not exist or bad permissions", wksp_name ));
   ulong offset = fd_ulong_align_up( fd_wksp_private_data_off( wksp->part_max ), fd_topo_workspace_align() );
@@ -94,10 +94,36 @@ int main( int argc, char ** argv ) {
   fd_rpc_ctx_t * ctx = NULL;
   fd_rpc_start_service( &args, &ctx );
 
-  ulong * rep_sync = fd_mcache_seq_laddr( args->rep_notify );
-  ulong next_seq = fd_mcache_seq_query( rep_sync ) + 1;
+  ulong * rep_sync = fd_mcache_seq_laddr( args.rep_notify );
+  ulong seq_expect = fd_mcache_seq_query( rep_sync );
   while( !stopflag ) {
+    fd_frag_meta_t const * mline = args.rep_notify + fd_mcache_line_idx( seq_expect, FD_REPLAY_NOTIF_DEPTH );
 
+    ulong seq_found = fd_frag_meta_seq_query( mline );
+    long  diff      = fd_seq_diff( seq_found, seq_expect );
+    if( FD_UNLIKELY( diff ) ) { /* caught up or overrun, optimize for expected sequence number ready */
+      if( FD_UNLIKELY( diff>0L ) ) {
+        seq_expect = fd_mcache_seq_query( rep_sync );
+        FD_LOG_NOTICE(( "overrun: seq=%lu seq_found=%lu diff=%ld", seq_expect, seq_found, diff ));
+      }
+      continue;
+    }
+
+    fd_replay_notif_msg_t msg;
+    FD_TEST( mline->sz == sizeof(msg) );
+    fd_memcpy(&msg, fd_chunk_to_laddr( args.rep_notify_wksp, mline->chunk ), sizeof(msg));
+
+    seq_found = fd_frag_meta_seq_query( mline );
+    diff      = fd_seq_diff( seq_found, seq_expect );
+    if( FD_UNLIKELY( diff ) ) { /* caught up or overrun, optimize for expected sequence number ready */
+      seq_expect = fd_mcache_seq_query( rep_sync );
+      FD_LOG_NOTICE(( "overrun: seq=%lu seq_found=%lu diff=%ld", seq_expect, seq_found, diff ));
+      continue;
+    }
+
+    FD_LOG_NOTICE(("%lu", seq_found));
+
+    ++seq_expect;
   }
 
   fd_rpc_stop_service( ctx );

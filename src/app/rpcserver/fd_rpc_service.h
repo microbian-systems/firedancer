@@ -9,6 +9,7 @@
 struct fd_rpcserver_args {
   fd_funk_t *       funk;
   fd_blockstore_t * blockstore;
+  fd_wksp_t *       rep_notify_wksp;
   fd_frag_meta_t *  rep_notify;
   ulong             num_threads;
   ushort            port;

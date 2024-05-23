@@ -24,7 +24,7 @@ fd_vote_txn_generate(fd_compact_vote_state_update_t *compact_vote_update,
   vote_txn_accounts.readonly_signed_cnt   = 0;
   vote_txn_accounts.readonly_unsigned_cnt = 1;
   vote_txn_accounts.acct_cnt              = 3;
-  vote_txn_accounts.signers_w             = pubkeys;              /* 2 pubkeys: vote account, vote authority */
+  vote_txn_accounts.signers_w             = pubkeys;              /* 2 pubkeys: validator, vote account */
   vote_txn_accounts.signers_r             = NULL;                 /* 0 pubkey */
   vote_txn_accounts.non_signers_w         = NULL;                 /* 0 pubkey */
   vote_txn_accounts.non_signers_r         = &vote_program_pubkey; /* 1 pubkey: vote program */

@@ -44,12 +44,23 @@ static void
 sign_fun( void * arg, uchar * sig, uchar const * buffer, ulong len ) {
   fd_gossip_config_t * config = (fd_gossip_config_t *)arg;
   fd_sha512_t          sha[1];
-  fd_ed25519_sign( /* sig */ sig,
-                   /* msg */ buffer,
-                   /* sz  */ len,
-                   /* public_key  */ config->public_key->uc,
-                   /* private_key */ config->private_key,
-                   sha );
+  if (len == 48UL && (memcmp( buffer, "SOLANA_PING_PONG", 16UL ) == 0)) {
+    uchar hash[32];
+    fd_sha256_hash( buffer, len, hash );
+    fd_ed25519_sign( /* sig */ sig,
+                     /* msg */ hash,
+                     /* sz  */ 32,
+                     /* public_key  */ config->public_key->uc,
+                     /* private_key */ config->private_key,
+                     sha );
+  } else {
+    fd_ed25519_sign( /* sig */ sig,
+                     /* msg */ buffer,
+                     /* sz  */ len,
+                     /* public_key  */ config->public_key->uc,
+                     /* private_key */ config->private_key,
+                     sha );
+  }
 }
 
 static int
@@ -192,6 +203,7 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
           memcpy(sign_addr, validator_sig, SIGNATURE_SZ);
           memcpy(sign_addr + SIGNATURE_SZ, voter_sig, SIGNATURE_SZ);
           fd_gossip_push_value( arg_->gossip, data, NULL );
+
           static ulong echo_cnt = 0;
           FD_LOG_NOTICE( ("Echo gossip vote#%lu: root=%lu, from=%32J, gossip_pubkey=%32J, txn_acct_cnt=%u(readonly_s=%u, readonly_us=%u), sign_cnt=%u, sign_off=%u | instruction#0: program=%32J",
                           echo_cnt++,

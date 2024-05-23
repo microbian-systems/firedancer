@@ -5,6 +5,7 @@
 #include "../../util/wksp/fd_wksp_private.h"
 #include "../../disco/topo/fd_topo.h"
 #include "fd_rpc_service.h"
+#include "../fdctl/run/tiles/fd_replay_notif.h"
 
 /*
 static void usage( char const * progname ) {
@@ -93,8 +94,10 @@ int main( int argc, char ** argv ) {
   fd_rpc_ctx_t * ctx = NULL;
   fd_rpc_start_service( &args, &ctx );
 
+  ulong * rep_sync = fd_mcache_seq_laddr( args->rep_notify );
+  ulong next_seq = fd_mcache_seq_query( rep_sync ) + 1;
   while( !stopflag ) {
-    sleep( 1 );
+
   }
 
   fd_rpc_stop_service( ctx );

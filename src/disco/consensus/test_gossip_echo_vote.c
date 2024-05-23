@@ -181,40 +181,25 @@ gossip_deliver_fun( fd_crds_data_t * data, void * arg ) {
           vote_instr.inner.compact_update_vote_state.timestamp = &MAGIC_TIMESTAMP;
 
           /* Prepare the keys  */
-          fd_pubkey_t validator_pubkey, voter_pubkey;
-          uchar validator_privkey[32], voter_privkey[32];
+          fd_pubkey_t validator_pubkey, vote_acct_pubkey;
+          uchar validator_privkey[32], vote_acct_privkey[32];
           memcpy( validator_privkey, arg_->validator_keypair, 32 );
-          memcpy( voter_privkey, arg_->voter_keypair, 32 );
+          memcpy( vote_acct_privkey, arg_->voter_keypair, 32 );
           memcpy( validator_pubkey.key, arg_->validator_keypair + 32UL, 32 );
-          memcpy( voter_pubkey.key, arg_->voter_keypair + 32UL, 32 );
+          memcpy( vote_acct_pubkey.key, arg_->voter_keypair + 32UL, 32 );
 
           /* Generate and send a vote transaction */
           fd_crds_data_t echo_data;
           echo_data.discriminant = fd_crds_data_enum_vote;
           echo_data.inner.vote.txn.raw_sz = fd_vote_txn_generate( &vote_instr.inner.compact_update_vote_state,
                                                                   &validator_pubkey,
-                                                                  &voter_pubkey,
+                                                                  &vote_acct_pubkey,
                                                                   validator_privkey,
-                                                                  voter_privkey,
+                                                                  vote_acct_privkey,
                                                                   vote->txn.raw + parsed_txn->recent_blockhash_off,
                                                                   echo_data.inner.vote.txn.txn_buf,
                                                                   echo_data.inner.vote.txn.raw);
           fd_gossip_push_value( arg_->gossip, &echo_data, NULL );
-
-          /*
-          fd_txn_t *new_parsed_txn = (fd_txn_t *)fd_type_pun( echo_data.inner.vote.txn.txn );
-          uchar* sign_addr = vote->txn.raw + parsed_txn->signature_off;
-          uchar* new_sign_addr = echo_data.inner.vote.txn.raw + new_parsed_txn->signature_off;
-          FD_LOG_WARNING(("old_sign_off=%lu, new_sign_off=%lu", parsed_txn->signature_off, new_parsed_txn->signature_off));
-          FD_LOG_WARNING(("old_msg_size=%lu, new_msg_size=%lu", vote->txn.raw_sz - parsed_txn->message_off, echo_data.inner.vote.txn.raw_sz - new_parsed_txn->message_off));
-          FD_LOG_WARNING(("Old signatures: %32J, %32J || New signatures: %32J, %32J", sign_addr, sign_addr + FD_TXN_SIGNATURE_SZ, new_sign_addr, new_sign_addr + FD_TXN_SIGNATURE_SZ));
-          FD_TEST( vote->txn.raw_sz - parsed_txn->message_off == echo_data.inner.vote.txn.raw_sz - new_parsed_txn->message_off  );
-          for (ulong i = 0; i < echo_data.inner.vote.txn.raw_sz - new_parsed_txn->message_off; i++) {
-            if (vote->txn.raw[parsed_txn->message_off + i] != echo_data.inner.vote.txn.raw[new_parsed_txn->message_off + i]) {
-              FD_LOG_ERR(("offset=%lu is different: %u - %u", parsed_txn->message_off + i, vote->txn.raw[parsed_txn->message_off + i], echo_data.inner.vote.txn.raw[new_parsed_txn->message_off + i]));
-            }
-          }
-          */
 
           static ulong echo_cnt = 0;
           FD_LOG_NOTICE( ("Echo gossip vote#%lu: root=%lu, from=%32J, gossip_pubkey=%32J, txn_acct_cnt=%u(readonly_s=%u, readonly_us=%u), sign_cnt=%u, sign_off=%u | instruction#0: program=%32J",

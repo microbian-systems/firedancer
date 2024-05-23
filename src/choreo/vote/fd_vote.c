@@ -51,7 +51,7 @@ fd_vote_txn_generate(fd_vote_state_update_t *vote_update,
                    /* public_key  */ vote_acct_pubkey->key,
                    /* private_key */ vote_acct_privkey,
                    &sha);
-  fd_ed25519_sign( /* sig */ out_txn_buf + txn_meta->signature_off,
+  fd_ed25519_sign( /* sig */ out_txn_buf + txn_meta->signature_off + FD_TXN_SIGNATURE_SZ,
                    /* msg */ out_txn_buf + txn_meta->message_off,
                    /* sz  */ txn_size - txn_meta->message_off,
                    /* public_key  */ vote_auth_pubkey->key,

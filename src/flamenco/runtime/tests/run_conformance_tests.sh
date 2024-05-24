@@ -9,7 +9,7 @@
 # Required arguments:
 # -i|--test-inputs: the directory containing the test inputs 
 # Optional arguments:
-# -r|--run-dir: the directory where the tests will be run (default: $HOME/conformance_tests)
+# -r|--run-dir: the directory where the tests will be run (default: /data/conformance_tests)
 # -fdr|--firedancer-repo: the path to the firedancer repository (default: cloned repo)
 # -fdb|--firedancer-branch: the branch of the firedancer repository to use (default: main)
 # -ar|--agave-repo: the path to the solfuzz-agave repository (default: cloned repo)
@@ -20,7 +20,7 @@
 
 
 # Default values
-RUN_DIRECTORY="$HOME/conformance_tests"
+RUN_DIRECTORY="/data/conformance_tests"
 FIREDANCER_BRANCH="main"
 AGAVE_BRANCH="agave-v2.0"
 SOLANA_CONFORMANCE_BRANCH="main"
